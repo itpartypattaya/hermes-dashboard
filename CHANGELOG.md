@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.0 — 2026-08-16
+
+* **Favicon.** Pages and the settings page carry a browser-tab icon, inlined as a `data:`
+  URI so both serving contexts show it without an extra request. Configurable through
+  `agent.favicon` (and from the settings form); an empty value or a missing file renders
+  no `<link>` rather than a broken one. The bundled default is the Hermes Agent mark
+  (MIT, © 2025 Nous Research — `assets/NOTICE`).
+
+
 ## v0.2.1 — 2026-08-16
 
 Fresh-install pass: cloned the repo next to an empty `HERMES_HOME`, applied the example

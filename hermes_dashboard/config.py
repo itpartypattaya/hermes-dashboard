@@ -29,6 +29,7 @@ DEFAULTS: dict[str, Any] = {
             "ru": "Живой статус сервера, безопасность, модели и их использование, память и автоматика.",
         },
         "people": [],                     # [{"label": "Alice", "handle": "@alice"}]
+        "favicon": "assets/favicon.ico",   # data: URI in every page; "" = no icon
         "config_repo_label": "",          # e.g. "my-agent-config (private)"
     },
     "paths": {

@@ -196,6 +196,16 @@ class BuildTests(unittest.TestCase):
         self.assertIn("index.html", pages)
         self.assertIn("7.0M", pages["index.html"])   # weekly bar scaled from budgets.env
 
+    def test_favicon_is_inlined_and_optional(self):
+        home = make_home()
+        pages = self._build(home)
+        self.assertIn('<link rel="icon" type="image/x-icon" href="data:image/x-icon;base64,',
+                      pages["index.html"])
+        # a missing or empty favicon must produce no <link> at all, not a broken one
+        from hermes_dashboard import config as cfgmod, render
+        self.assertEqual(render.favicon_link(cfgmod.Config({"agent": {"favicon": ""}})), "")
+        self.assertEqual(render.favicon_link(cfgmod.Config({"agent": {"favicon": "no/such.ico"}})), "")
+
     def test_synthetic_db(self):
         home = make_home()
         pages = self._build(home)

@@ -95,6 +95,10 @@ SCHEMA = [
                  "help": "Small line under the name — platform and server, for your own orientation."},
                 {"path": "agent.config_repo_label", "kind": "text", "label": "Footer line",
                  "help": "Printed in the page footer; usually where the config lives."},
+                {"path": "agent.favicon", "kind": "text", "label": "Favicon file",
+                 "help": "Browser-tab icon (.ico/.png/.svg), looked up in the agent home first, "
+                         "then next to the engine. Inlined into every page, so keep it small; "
+                         "empty means no icon."},
                 {"path": "agent.tagline", "kind": "i18n", "label": "Kicker above the title"},
                 {"path": "agent.description", "kind": "i18n", "label": "Overview intro", "textarea": True},
             ]},

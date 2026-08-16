@@ -39,7 +39,11 @@ exactly the same code as production. Nothing in it is real.
 | **Settings** | its own page in the same design system: every setting as a field, the budget file key by key, billing-CSV upload, rebuild now, build log |
 
 Dark/light theme with a toggle, print-friendly (`@media print` unfolds every view),
-mobile tabs, Google Fonts (Unbounded / Onest / JetBrains Mono).
+mobile tabs, Google Fonts (Unbounded / Onest / JetBrains Mono). The browser-tab icon
+defaults to the Hermes Agent mark bundled in `assets/favicon.ico` (MIT, © Nous Research —
+see `assets/NOTICE`); point `agent.favicon` at your own file, or set it to `""` for none.
+It is inlined as a `data:` URI so the static pages and the settings server — served from
+different paths — show the same icon without an extra request.
 
 ## Honesty rules baked in
 
@@ -118,7 +122,7 @@ the settings page.
 
 | Group | What it controls |
 |---|---|
-| `agent` | name, glyph, host caption, footer line, tagline/description per language, people chips |
+| `agent` | name, glyph, host caption, footer line, favicon, tagline/description per language, people chips |
 | `paths` | `hermes_home`, `out_dir`, `venv_python`, `node`, `budgets_env`, `config_descriptions` per language, `settings_url`, `gateway_unit` |
 | `i18n` | default language and the list to build |
 | `timezone` | name, whole-hour UTC offset, short label |

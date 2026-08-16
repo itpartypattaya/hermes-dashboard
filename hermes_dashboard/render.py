@@ -8,6 +8,7 @@ choice in localStorage and redirects on first load.
 """
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 from .common import esc
@@ -22,6 +23,41 @@ FONTS = ('<link rel="preconnect" href="https://fonts.googleapis.com">'
          '&display=swap" rel="stylesheet">')
 THEME_KEY = "hd-theme"
 LANG_KEY = "hd-lang"
+
+_FAVICON_CACHE: dict[str, str] = {}
+_MIME = {".ico": "image/x-icon", ".png": "image/png", ".svg": "image/svg+xml",
+         ".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def favicon_link(cfg: Config) -> str:
+    """<link rel="icon"> as a data: URI.
+
+    Inlined rather than referenced as a file because the same <head> is served
+    from two places — the static out_dir and the settings server on another
+    path — and a relative favicon.ico would 404 in one of them. agent.favicon
+    is resolved in the agent home first, then next to the engine; empty or
+    missing file = no icon at all (a broken <link> is worse than none).
+    """
+    rel = str(cfg.get("agent.favicon", "") or "")
+    if not rel:
+        return ""
+    if rel in _FAVICON_CACHE:
+        return _FAVICON_CACHE[rel]
+    cands = [cfg.path_in_home(rel), ASSETS.parent / rel]
+    out = ""
+    for p in cands:
+        try:
+            raw = Path(p).read_bytes()
+        except OSError:
+            continue
+        if len(raw) > 200_000:      # a huge icon on every page is a bug, not a design
+            break
+        mime = _MIME.get(Path(p).suffix.lower(), "application/octet-stream")
+        out = ('<link rel="icon" type="' + mime + '" href="data:' + mime + ";base64,"
+               + base64.b64encode(raw).decode("ascii") + '">')
+        break
+    _FAVICON_CACHE[rel] = out
+    return out
 
 
 def _svg(body: str) -> str:
@@ -81,8 +117,8 @@ def head(cfg: Config, title: str, lang: str, base: str = "index") -> str:
         f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<meta name="robots" content="noindex, nofollow">'
-        f'<title>{esc(title)}</title>'
-        '<script>try{var mt=localStorage.getItem("' + THEME_KEY + '")||'
+        f'<title>{esc(title)}</title>' + favicon_link(cfg)
+        + '<script>try{var mt=localStorage.getItem("' + THEME_KEY + '")||'
         '(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");'
         'document.documentElement.setAttribute("data-theme",mt)}catch(e){}</script>'
         + redirect + FONTS + f'<style>{read_style()}</style></head><body class="hasrail">'
