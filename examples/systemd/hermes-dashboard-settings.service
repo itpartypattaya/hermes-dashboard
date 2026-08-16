@@ -1,0 +1,14 @@
+# ~/.config/systemd/user/hermes-dashboard-settings.service  (systemctl --user enable --now …)
+# or /etc/systemd/system/ with User= set.
+[Unit]
+Description=hermes-dashboard settings page (127.0.0.1 only)
+After=network.target
+
+[Service]
+Environment=HERMES_HOME=%h/.hermes
+ExecStart=%h/.hermes/hermes-dashboard/bin/hermes-dashboard settings --config %h/.hermes/dashboard/dashboard.json --port 8648
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

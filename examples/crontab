@@ -1,0 +1,3 @@
+# Regenerate every 30 minutes; the log keeps generator stderr (the only place a
+# failed generator shows up — the exit code stays 0 by design).
+*/30 * * * * HERMES_HOME=$HOME/.hermes $HOME/.hermes/hermes-dashboard/bin/hermes-dashboard build --config $HOME/.hermes/dashboard/dashboard.json >> $HOME/.hermes/logs/dashboard.log 2>&1

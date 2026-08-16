@@ -1,0 +1,276 @@
+{
+  "agent": {
+    "name": "Hermes",
+    "glyph": "◆",
+    "host_label": "hermes · my-server",
+    "tagline": {
+      "en": "System dashboard · Hermes Agent",
+      "ru": "Системный дашборд · Hermes Agent"
+    },
+    "description": {
+      "en": "Live server status, security, models and their usage, memory and automation.",
+      "ru": "Живой статус сервера, безопасность, модели и их использование, память и автоматика."
+    },
+    "people": [
+      {
+        "label": "Owner",
+        "handle": "@owner"
+      }
+    ],
+    "config_repo_label": "source of truth — my-agent-config"
+  },
+  "paths": {
+    "hermes_home": "~/.hermes",
+    "out_dir": "/var/www/agent-dashboard",
+    "venv_python": "~/.hermes/hermes-agent/venv/bin/python",
+    "node": "",
+    "budgets_env": "dashboard/budgets.env",
+    "config_descriptions": {
+      "en": "dashboard/config-descriptions.en.json"
+    },
+    "history_csv": "cache/dashboard-history.csv",
+    "settings_url": "settings/"
+  },
+  "i18n": {
+    "default": "en",
+    "languages": [
+      "en",
+      "ru"
+    ]
+  },
+  "timezone": {
+    "name": "Europe/Berlin",
+    "offset_hours": 2,
+    "label": "CEST"
+  },
+  "providers": {
+    "primary": {
+      "id": "openai-codex",
+      "label": "Codex",
+      "billing": "subscription",
+      "subscription_usd_month": 20,
+      "weekly_input_budget": 25000000,
+      "ref_in_per_m": 1.25,
+      "ref_out_per_m": 10.0,
+      "quota_cache": "cache/codex_quota.json"
+    },
+    "paid": [
+      {
+        "id": "anthropic",
+        "label": "Claude Sonnet",
+        "in_per_m": 3.0,
+        "out_per_m": 15.0,
+        "cost_cache": "cache/anthropic_cost.json",
+        "rank": 1
+      }
+    ],
+    "free": [
+      {
+        "id": "gemini",
+        "model": "gemini-2.5-flash",
+        "label": "Gemini Flash (free key)"
+      }
+    ],
+    "fallback_sources": [
+      "telegram",
+      "cron",
+      "line"
+    ],
+    "cost_fresh_days": 6
+  },
+  "sources": {
+    "telegram": "Telegram",
+    "cron": "Cron · autonomous",
+    "cli": "CLI",
+    "subagent": "Subagents · delegate_task",
+    "tool": "Tool sessions",
+    "tui": "TUI",
+    "line": "LINE",
+    "api": "API"
+  },
+  "chats": {
+    "names": {
+      "-100<chat id>": "Family chat"
+    }
+  },
+  "usage": {
+    "oauth_groups": [
+      {
+        "label": "Sheets / Drive / Docs",
+        "like": "mcp_google_workspace%",
+        "not_like": "%gmail%"
+      },
+      {
+        "label": "Calendar",
+        "like": "mcp_google_calendar%"
+      },
+      {
+        "label": "Gmail",
+        "like": "%gmail%"
+      }
+    ],
+    "tool_groups": [
+      {
+        "prefix": "mcp_google_workspace",
+        "label": "Google Sheets/Drive"
+      },
+      {
+        "prefix": "mcp_google_calendar",
+        "label": "Google Calendar"
+      },
+      {
+        "prefix": "mcp_notion",
+        "label": "Notion"
+      },
+      {
+        "prefix": "tg_",
+        "label": "Telegram"
+      }
+    ],
+    "stt_log_regex": "Transcribed"
+  },
+  "cron": {
+    "dream_job_id": "<id of the nightly dreaming job in cron/jobs.json>",
+    "watchdogs": [
+      {
+        "id": "<job id>",
+        "label": {
+          "en": "Tirith watchdog"
+        },
+        "schedule": {
+          "en": "every 15 min"
+        }
+      }
+    ],
+    "name_strip_prefixes": [
+      "Agent:"
+    ],
+    "categories": [
+      {
+        "key": "dream",
+        "keywords": [
+          "dream",
+          "сон"
+        ],
+        "class": "cy",
+        "legend": {
+          "en": "memory consolidation",
+          "ru": "консолидация памяти"
+        }
+      },
+      {
+        "key": "report",
+        "keywords": [
+          "report",
+          "digest",
+          "отчёт",
+          "обзор",
+          "дайджест"
+        ],
+        "class": "am",
+        "legend": {
+          "en": "analytics & reports",
+          "ru": "аналитика и отчёты"
+        }
+      }
+    ],
+    "default_category": {
+      "class": "lime",
+      "legend": {
+        "en": "reminders & other",
+        "ru": "напоминания и прочее"
+      }
+    },
+    "system_category": {
+      "class": "n",
+      "legend": {
+        "en": "system",
+        "ru": "система"
+      }
+    },
+    "system_jobs": [
+      {
+        "match": "git-autosync",
+        "label": {
+          "en": "Config autosync",
+          "ru": "Автосинк GitHub"
+        }
+      },
+      {
+        "match": "hermes-dashboard",
+        "label": {
+          "en": "Dashboard regeneration",
+          "ru": "Регенерация дашборда"
+        }
+      }
+    ]
+  },
+  "security": {
+    "shield_file": "SHIELD.md",
+    "shield_bullets": {
+      "en": [
+        "One code of boundaries: privacy · secrets · external actions"
+      ]
+    },
+    "evals_path": "evals/prompt-injection/evals.json",
+    "evals_bullets": {
+      "en": [
+        "Coverage: system prompt, private data, identity spoofing"
+      ]
+    },
+    "log_files": [
+      "logs/gateway.log",
+      "logs/gateway.log.1",
+      "logs/agent.log",
+      "logs/agent.log.1",
+      "logs/errors.log",
+      "logs/errors.log.1"
+    ],
+    "tirith_regex": "tirith\\s+(?:path\\s+resolved\\s+to\\s+None|spawn\\s+failed|timed\\s+out\\s+after|returned\\s+unexpected\\s+exit\\s+code)|tirith.*scanning\\s+disabled",
+    "alert_channel_label": ""
+  },
+  "memory": {
+    "memory_file": "memories/MEMORY.md",
+    "user_file": "memories/USER.md",
+    "memory_char_limit_default": 0,
+    "user_char_limit_default": 0,
+    "backup_branch": "agent/state"
+  },
+  "connectors": {
+    "skills_from_gitignore": true,
+    "descriptions": {
+      "sheets": {
+        "en": "Household spreadsheets: read/write rows."
+      }
+    },
+    "extra_cards": [
+      {
+        "section": "candidates",
+        "nm": {
+          "en": "Semantic memory"
+        },
+        "sv": {
+          "en": "memory"
+        },
+        "status": "part",
+        "ds": {
+          "en": "Keyword FTS5 search only; no embeddings yet."
+        },
+        "how": {
+          "en": "local embedder → sqlite-vec"
+        },
+        "tags": [
+          "complexity: medium"
+        ]
+      }
+    ]
+  },
+  "views": {
+    "config_map": true,
+    "connectors": true
+  },
+  "config_map": {
+    "truth_ref": "origin/main"
+  },
+  "_note": "Example configuration — replace every value with your own. Prices are the providers' published list prices at the time of writing and are only used for estimates."
+}

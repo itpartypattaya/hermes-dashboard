@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# hermes-dashboard — thin runner around the python package.
+#   hermes-dashboard build [--config dashboard.json] [--out DIR] [--lang xx]
+#   hermes-dashboard settings [--config dashboard.json] [--port 8648]
+#   hermes-dashboard check    # tests + config validation
+# The system python3 (stdlib only) is enough for build; the config map and the
+# quota collector are spawned under paths.venv_python from dashboard.json.
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"
+PY="${HERMES_DASHBOARD_PYTHON:-python3}"
+cmd="${1:-build}"; shift || true
+case "$cmd" in
+  build)    exec "$PY" -m hermes_dashboard.build "$@" ;;
+  settings) exec "$PY" -m hermes_dashboard.settings "$@" ;;
+  check)    exec "$PY" -m unittest discover -s "$HERE/tests" "$@" ;;
+  *) echo "usage: hermes-dashboard build|settings|check [args]" >&2; exit 2 ;;
+esac

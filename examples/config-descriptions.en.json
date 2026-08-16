@@ -1,0 +1,39 @@
+{
+  "_note": "Semantic layer of the Config view: hand-written prose per config.yaml key. Values (engine default / effective / truth ref / drift) are computed on every build and never live here. Point paths.config_descriptions.<lang> at a file like this; the view builds without one, but then it shows values only.",
+  "_rule": "Describe the MECHANICS of a key, not a snapshot of state. 'Enabled in production' rots at the first edit; 'read at access time, so no restart is needed' stays true.",
+  "_flags": "redline — do not touch without a conversation; alias — the engine stores the key under a different name; dormant — asleep because the parent is disabled; temp-off — disabled temporarily; nested — meaning lives on the parent key; ours — key is not in the engine schema (your own extension).",
+  "sections": [
+    {
+      "id": "model",
+      "title": "Model and routing",
+      "hint": "who answers, who steps in on failure",
+      "keys": [
+        {
+          "path": "model.default",
+          "flags": ["alias"],
+          "text": "The main model the agent thinks with. Declared as the string `model` in the engine defaults and expanded to the dict `model.{default,provider,base_url}` on save — the map reconciles both forms through an alias table."
+        },
+        {
+          "path": "model.provider",
+          "text": "Provider of the main model. Decides how the request is authenticated (OAuth subscription vs API key) and therefore whether the traffic is billed per token."
+        },
+        {
+          "path": "fallback_model.*",
+          "text": "Wildcard entry: one description for every key under fallback_model. Which model answers when the primary fails, and how the failure is detected."
+        }
+      ]
+    },
+    {
+      "id": "memory",
+      "title": "Memory",
+      "hint": "what survives between sessions and how big it may get",
+      "keys": [
+        {
+          "path": "memory.memory_char_limit",
+          "flags": ["redline"],
+          "text": "Hard cap for the runtime memory digest. Above it the agent stops accepting new entries — raising it costs prompt tokens on every turn."
+        }
+      ]
+    }
+  ]
+}
