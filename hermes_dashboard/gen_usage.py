@@ -103,7 +103,7 @@ def source_breakdown(db, days: int, provider: str):
     labels = cfg.get("sources", {})
     rs = db.execute(
         "SELECT coalesce(source,'—') s, count(*) c FROM sessions "
-        "WHERE billing_provider = ? AND started_at >= strftime('%s','now',?) "
+        "WHERE billing_provider = ? AND " + active() + " AND started_at >= strftime('%s','now',?) "
         "GROUP BY s ORDER BY c DESC", (provider, f"-{days} days")).fetchall()
     return [(_(str(labels.get(r["s"], r["s"]))), r["c"]) for r in rs]
 
@@ -289,8 +289,10 @@ def build() -> tuple[str, str]:
     pid = primary_id(cfg)
     fresh_days = int(cfg.get("providers.cost_fresh_days", 6))
     with db:
-        cx7 = agg_where(db, 7, f"billing_provider='{pid}'")
-        cx30 = agg_where(db, 30, f"billing_provider='{pid}'")
+        # active(): a session with no model call is not usage — README's first
+        # honesty rule — and would otherwise inflate the session count here.
+        cx7 = agg_where(db, 7, f"billing_provider='{pid}' AND " + active())
+        cx30 = agg_where(db, 30, f"billing_provider='{pid}' AND " + active())
         cx_src = source_breakdown(db, 30, pid)
         paid_data = []
         for p in cfg.get("providers.paid", []):

@@ -254,9 +254,12 @@ class State:
         return self.cfg.path_in_home(self.cfg.get("paths.budgets_env", "dashboard/budgets.env"))
 
     def csv_path(self) -> Path:
-        override = os.environ.get("HERMES_DASHBOARD_COST_CSV")
-        if override:
-            return Path(override)
+        # The documented override belongs to the collector — honour the same
+        # name here, or the upload lands where nothing reads it.
+        for var in ("HERMES_DASHBOARD_ANTHROPIC_COST_CSV", "HERMES_DASHBOARD_COST_CSV"):
+            override = os.environ.get(var)
+            if override:
+                return Path(override)
         for p in self.cfg.get("providers.paid", []):
             cache = p.get("cost_cache")
             if cache:
@@ -744,10 +747,21 @@ class Handler(BaseHTTPRequestHandler):
         return urlparse(origin).netloc.split(":")[0] == host.split(":")[0]
 
     def _lang(self) -> str:
+        """Active language — ONLY ever one of cfg.languages.
+
+        ?lang= and the cookie are attacker-controlled: the value ends up in
+        <html lang>, in hidden form fields and in a Set-Cookie header, so an
+        unchecked string is reflected XSS (and header injection) against an
+        already-authenticated admin. Whitelisting is the fix; escaping in the
+        renderer is the second line of defence.
+        """
+        allowed = self.state.cfg.languages
         q = parse_qs(urlparse(self.path).query)
-        lang = (q.get("lang") or [None])[0]
-        m = re.search(r"hd-lang=([a-z]{2})", self.headers.get("Cookie") or "")
-        return lang or (m.group(1) if m else None) or self.state.cfg.default_lang
+        cand = (q.get("lang") or [None])[0]
+        if cand not in allowed:
+            m = re.search(r"hd-lang=([A-Za-z0-9_-]{1,8})", self.headers.get("Cookie") or "")
+            cand = m.group(1) if m else None
+        return cand if cand in allowed else self.state.cfg.default_lang
 
     def _host_info(self) -> dict:
         from . import sysinfo
@@ -757,8 +771,17 @@ class Handler(BaseHTTPRequestHandler):
                 "gwt": _("running") if gw == "active" else gw,
                 "sync": sysinfo.last_sync(), "sha": sha, "commit": commit}
 
+    # set_lang() is process-wide state and ThreadingHTTPServer answers requests
+    # in parallel: without this, two browsers on different languages hand each
+    # other half-translated pages. The page is cheap, so one lock is enough.
+    _render_lock = threading.Lock()
+
     def do_GET(self):
         path = urlparse(self.path).path
+        with self._render_lock:
+            return self._do_get_locked(path)
+
+    def _do_get_locked(self, path):
         lang = self._lang()
         set_lang(lang)
         if path.endswith("/log"):
@@ -770,6 +793,10 @@ class Handler(BaseHTTPRequestHandler):
                           extra={"Set-Cookie": f"hd-lang={lang}; Path=/; SameSite=Lax"})
 
     def do_POST(self):
+        with self._render_lock:
+            return self._do_post_locked()
+
+    def _do_post_locked(self):
         length = int(self.headers.get("Content-Length") or 0)
         if length > MAX_UPLOAD + 262144:
             return self._send("payload too large", 413, "text/plain")

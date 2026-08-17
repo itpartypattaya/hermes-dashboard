@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.4.0 — 2026-08-16
+
+A review round; every item below has a test that fails on the previous release.
+
+**Security.** `?lang=` on the settings server was reflected into `<html lang>`, into hidden
+form fields and into a `Set-Cookie` header without validation — reflected XSS against an
+already-authenticated admin, which basic-auth does nothing to stop. The language is now
+accepted only if it is one of `i18n.languages`, and it is escaped at the renderer as well
+(attribute and JS-literal contexts).
+
+**Correctness.**
+
+* The Cost API was called with `limit=32`; daily buckets cap at **31**, so the request was a
+  400 that the collector swallowed — leaving the card silently on an old CSV or an estimate.
+  Legal page size, `has_more`/`next_page` followed, and the reason printed to stderr.
+* `timezone.offset_hours: 24` passed validation and then crashed the build in
+  `datetime.timezone()`; an uncompilable `usage.stt_log_regex` or `security.tirith_regex` did
+  the same at `re.compile`. All three are rejected at save time now.
+* Sessions where the model was never called could reach the primary card's session count, the
+  per-source breakdown and the forced-fallback count — contradicting the first honesty rule in
+  this README. All three require `api_call_count > 0` now. The "deliberate paid runs" KPI
+  counted every non-forced source while calling them CLI runs; it is now an explicit
+  `deliberate_paid()` condition with an honest label.
+
+**Robustness.**
+
+* Concurrent builds shared one temp file per page (`index.html.tmp`), so cron and a manual
+  rebuild could fail to publish or publish a half-written page. Temp files are unique per
+  write, a lock file in the output directory keeps a second build out, and the rename retries
+  briefly (Windows refuses to replace a file a reader holds).
+* A raising section used to abort the whole build. Each generator is wrapped now: the section
+  is dropped, the reason goes to stderr, the rest of the page is published.
+* The Automation view vanished entirely when every cron job was interval-based, taking the
+  economics, billing tiers and per-job telemetry with it. Only the day axis is skipped now.
+* The settings page wrote uploaded cost CSVs to a path derived from `HERMES_DASHBOARD_COST_CSV`
+  while the collector read `HERMES_DASHBOARD_ANTHROPIC_COST_CSV`. One name, the documented one.
+
+**Privacy.** The pages claimed to make no external calls while loading Google Fonts on every
+view. The claim is corrected and `views.web_fonts: false` now removes the link entirely,
+falling back to a system font stack — with the trade-off spelled out on the settings page.
+
+
 ## v0.3.0 — 2026-08-16
 
 * **Favicon.** Pages and the settings page carry a browser-tab icon, inlined as a `data:`

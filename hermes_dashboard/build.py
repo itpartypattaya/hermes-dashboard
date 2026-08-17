@@ -13,11 +13,14 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 from . import (gen_banner, gen_connectors, gen_cron, gen_events, gen_security, gen_usage,
                history, render, sysinfo)
-from .common import (active, esc, fallback, fmt_tok, home, paid, scalar, yaml_get)
+from .common import (active, deliberate_paid, esc, fallback, fmt_tok, home, paid, scalar,
+                     yaml_get)
 from .config import Config, load_budgets_env, load_config, set_current
 from .i18n import _, set_lang
 
@@ -31,7 +34,7 @@ def collect_kpis(cfg: Config) -> dict:
         "PASSIVE7": f"SELECT count(*) FROM sessions WHERE NOT ({active()}) AND {W7}",
         "CRON7": f"SELECT count(*) FROM sessions WHERE source='cron' AND {active()} AND {W7}",
         "FALLBACK7": f"SELECT count(*) FROM sessions WHERE {fallback(cfg)} AND {W7}",
-        "PAIDCLI7": f"SELECT count(*) FROM sessions WHERE {paid(cfg)} AND NOT ({fallback(cfg)}) AND {W7}",
+        "PAIDCLI7": f"SELECT count(*) FROM sessions WHERE {deliberate_paid(cfg)} AND {W7}",
         "TOK7_IN": f"SELECT coalesce(sum(input_tokens),0) FROM sessions WHERE {W7}",
         "TOK7_OUT": f"SELECT coalesce(sum(output_tokens),0) FROM sessions WHERE {W7}",
         "TOK7_REASON": f"SELECT coalesce(sum(reasoning_tokens),0) FROM sessions WHERE {W7}",
@@ -170,7 +173,7 @@ def view_overview(cfg: Config, k: dict, deltas: dict, host: dict, lang: str) -> 
     fbclass = "warn" if (fb or 0) > 0 else "ok"
     fb_sub = _("forced switches to a paid provider")
     if (k.get("PAIDCLI7") or 0) > 0:
-        fb_sub = _("forced · plus {n} deliberate CLI runs on a paid key").format(n=k["PAIDCLI7"])
+        fb_sub = _("forced · plus {n} deliberate paid runs outside the interactive sources").format(n=k["PAIDCLI7"])
     dot = host["dot"]
     return (
         f'<section class="view on" id="v-over">'
@@ -315,12 +318,30 @@ def config_map_html(cfg: Config, lang: str) -> str:
             f'<div class="printonly">{_("system dashboard")} · {_("Config")}</div></section>')
 
 
+def _safe(name: str, fn, fallback_html: str = "") -> str:
+    """Run a section generator; a crash costs that section, not the page.
+
+    The promise in the README is that a failed generator shows up in the log
+    rather than as a blank dashboard — this is where that promise is kept. A
+    bad regex or an unexpected schema in one card used to abort the build and
+    leave yesterday's pages in place with nothing saying why.
+    """
+    try:
+        return fn()
+    except Exception as e:                       # noqa: BLE001 — deliberately broad
+        print("[section] %s failed: %s: %s" % (name, type(e).__name__, e), file=sys.stderr)
+        return fallback_html
+
+
 # ── main ──────────────────────────────────────────────────────────────
 
 def build_all(cfg: Config, only_lang: str | None = None, out_dir: Path | None = None) -> list[Path]:
     set_current(cfg)
     out_dir = out_dir or cfg.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+    lock = _BuildLock(out_dir).__enter__()
+    if not lock.held:
+        return []
     load_budgets_env(cfg)   # HERMES_DASHBOARD_QUOTA_ALERT_PCT etc. reach the collectors without a wrapper
     run_collectors(cfg)
     k = collect_kpis(cfg)
@@ -349,9 +370,10 @@ def build_all(cfg: Config, only_lang: str | None = None, out_dir: Path | None = 
             "sha": sha, "commit": commit,
             "freq": _("every {n} min").format(n=every) if every else _("on schedule"),
             "skilln": len(skills), "chain": chain,
-            "events": gen_events.build(), "security": gen_security.build(),
+            "events": _safe("events", gen_events.build),
+            "security": _safe("security", gen_security.build),
         }
-        usage, analytics = gen_usage.build()
+        usage, analytics = _safe("usage", gen_usage.build, ("", ""))
         title = f'{cfg.get("agent.name")} — {_("system dashboard")}'
         page = (render.head(cfg, title, lang)
                 + render.rail(cfg, lang, "over", host["dot"], host["gwt"], host["sync"], sha, commit)
@@ -359,7 +381,7 @@ def build_all(cfg: Config, only_lang: str | None = None, out_dir: Path | None = 
                 + view_overview(cfg, k, deltas, host, lang)
                 + view_cost(cfg, usage, analytics)
                 + view_memory(cfg, k, m, deltas, host)
-                + view_cron(cfg, gen_cron.build(), host)
+                + view_cron(cfg, _safe("cron", gen_cron.build), host)
                 + (config_map_html(cfg, lang) if cfg.get("views.config_map", True) else "")
                 + f'<footer><span>{_("Private dashboard")} · {_("generated")} {esc(host["now"])}</span>'
                 + f'<span>{esc(cfg.get("agent.config_repo_label", "")) or "hermes-dashboard"}</span></footer>'
@@ -369,18 +391,80 @@ def build_all(cfg: Config, only_lang: str | None = None, out_dir: Path | None = 
         written.append(target)
         if cfg.get("views.connectors", True):
             ctarget = out_dir / render.page_name(lang, cfg, "connectors")
-            chtml = gen_connectors.build_page(cfg, lang, host)
+            chtml = _safe("connectors", lambda: gen_connectors.build_page(cfg, lang, host))
             if chtml:
                 _atomic_write(ctarget, chtml)
                 written.append(ctarget)
+    lock.__exit__(None, None, None)
     return written
 
 
 def _atomic_write(target: Path, text: str) -> None:
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.chmod(tmp, 0o644)
-    tmp.replace(target)
+    """Write via a temp file unique to this process.
+
+    A shared `<name>.tmp` is a race: cron and a manual rebuild overlap, both
+    write the same temp path, and one of them either fails to rename or
+    publishes a page the other was still writing.
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.chmod(tmp, 0o644)
+        # POSIX renames over an open file happily; Windows refuses while any
+        # reader holds the target, which on a page served to a browser is a
+        # matter of milliseconds. Retry briefly instead of losing the build.
+        for attempt in range(10):
+            try:
+                tmp.replace(target)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.05)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+class _BuildLock:
+    """Best-effort single-writer lock on the output directory.
+
+    Not a correctness requirement (the writes are atomic on their own) but it
+    stops cron and a manual rebuild from doing the same work twice and from
+    publishing a half-and-half set of pages. A lock older than STALE seconds is
+    assumed to belong to a build that died and is taken over.
+    """
+
+    STALE = 900
+
+    def __init__(self, out_dir: Path):
+        self.path = out_dir / ".hermes-dashboard.lock"
+        self.held = False
+
+    def __enter__(self):
+        try:
+            if self.path.is_file() and time.time() - self.path.stat().st_mtime > self.STALE:
+                self.path.unlink(missing_ok=True)
+            fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            self.held = True
+        except FileExistsError:
+            print("[build] another build holds " + str(self.path) + " — skipping this run", file=sys.stderr)
+        except OSError as e:
+            print("[build] lock unavailable (%s) — building anyway" % (e,), file=sys.stderr)
+            self.held = True
+        return self
+
+    def __exit__(self, *exc):
+        if self.held:
+            try:
+                self.path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return False
 
 
 def main(argv=None) -> int:

@@ -9,7 +9,7 @@ Everything comes from the agent's own telemetry: `state.db`, `memory_store.db`,
 `cron/jobs.json`, `config.yaml`, systemd, git. **Nothing is typed in by hand — if a
 number cannot be collected automatically, it is not on the page.**
 
-`MIT` · `Python ≥ 3.9` · stdlib only · no build step, no runtime on the page, no external calls
+`MIT` · `Python ≥ 3.9` · stdlib only · no build step, no runtime on the page, no network calls except the web fonts (`views.web_fonts: false` removes those too)
 
 ---
 
@@ -133,7 +133,7 @@ the settings page.
 | `security` | rules file, evals file, bullets per language, scanner regex, alert channel label |
 | `memory` | bounded file paths, limit fallbacks, backup branch label |
 | `connectors` | per-key descriptions and curated extra cards for the capability map |
-| `views` | whether to build the config map and the capability map at all |
+| `views` | whether to build the config map and the capability map at all; `web_fonts` (default on) toggles the Google Fonts link |
 
 ## Settings page
 
@@ -199,13 +199,21 @@ locale is incomplete.
 
 * Regenerate from cron (`examples/crontab`). A build takes seconds and writes atomically,
   so a reader never catches half a page.
-* The pages are private by design: `noindex`, no runtime, no external calls, no secrets —
-  only aggregates. Put them behind basic-auth over TLS anyway (`examples/nginx.conf`).
+* The pages are private by design: `noindex`, no page runtime, no secrets — only aggregates.
+  Put them behind basic-auth over TLS anyway (`examples/nginx.conf`).
+* **One external request remains by default:** the typefaces come from `fonts.googleapis.com`,
+  so every view tells Google an IP and a timestamp. For a dashboard nobody should know you are
+  reading, set `views.web_fonts: false` — the layout falls back to the system stack and the page
+  then reaches nothing but your own server.
 * Keep the generated HTML out of git; keep `dashboard.json`, `budgets.env` and your
   config-description files in it.
-* stderr matters: the build keeps going when one section fails — a broken page served
-  with HTTP 200 is the worst outcome — so a failed generator shows up in the log, not in
-  the exit code. Send the cron output somewhere you occasionally read.
+* stderr matters: a section that raises is caught, logged as `[section] <name> failed: …`
+  and left out of the page — the rest still builds, because a dashboard missing one card
+  beats no dashboard at all. Collectors behave the same way (`[collector] …`) and keep the
+  previous cache. None of this changes the exit code, so send the cron output somewhere you
+  occasionally read.
+* Two builds at once (cron firing while you press "rebuild") are serialised by a lock file
+  in the output directory; the loser logs and exits. Writes are atomic per file regardless.
 
 ## Tests
 

@@ -24,7 +24,9 @@ from __future__ import annotations
 import csv
 import json
 import os
+import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -54,22 +56,55 @@ def _admin_key() -> str:
     return ""
 
 
+# Daily buckets are capped at 31 per page by the API (default 7). Asking for
+# more is a 400, and a swallowed 400 looks exactly like "no data" — the cache
+# silently stays on an old CSV. Hence: legal page size + follow next_page.
+MAX_DAILY_BUCKETS = 31
+
+
 def _fetch_api(key: str) -> list[dict] | None:
+    """All daily cost buckets of the last 30 days, or None (fail-open).
+
+    None means "we could not ask" and leaves the previous cache alone; the
+    reason goes to stderr, because a collector that fails in silence is
+    indistinguishable from a provider that spent nothing.
+    """
     start = (datetime.now(timezone.utc) - timedelta(days=30)).replace(
         hour=0, minute=0, second=0, microsecond=0)
-    url = (f"{ENDPOINT}?starting_at={start.strftime('%Y-%m-%dT%H:%M:%SZ')}"
-           "&bucket_width=1d&limit=32")
-    req = urllib.request.Request(url, headers={
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01",
-        "accept": "application/json",
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
-        return None
-    return payload.get("data") or []
+    base = (ENDPOINT + "?starting_at=" + start.strftime("%Y-%m-%dT%H:%M:%SZ")
+            + "&bucket_width=1d&limit=" + str(MAX_DAILY_BUCKETS))
+    out: list[dict] = []
+    page = None
+    for _hop in range(12):          # bounded: 30 days / 31 per page is one hop
+        url = base + ("&page=" + urllib.parse.quote(page) if page else "")
+        req = urllib.request.Request(url, headers={
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "accept": "application/json",
+            "user-agent": "hermes-dashboard/1.0 (+https://github.com/itpartypattaya/hermes-dashboard)",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", "replace")[:300]
+            except Exception:
+                pass
+            print("[anthropic_cost] cost_report HTTP %s: %s" % (e.code, body), file=sys.stderr)
+            return None
+        except (urllib.error.URLError, ValueError, OSError) as e:
+            print("[anthropic_cost] cost_report unreachable: %s" % (e,), file=sys.stderr)
+            return None
+        out.extend(payload.get("data") or [])
+        if not payload.get("has_more"):
+            return out
+        page = payload.get("next_page")
+        if not page:
+            return out
+    print("[anthropic_cost] cost_report: too many pages, truncated", file=sys.stderr)
+    return out
 
 
 def _from_api(key: str) -> dict | None:

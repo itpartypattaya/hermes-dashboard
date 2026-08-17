@@ -132,7 +132,10 @@ DEFAULTS: dict[str, Any] = {
         "descriptions": {},                # {"sheets": {"en": "...", "ru": "..."}}
         "extra_cards": [],                 # curated cards: {"section": "channels|plugins|web|candidates", "nm":..., "sv":..., "status":..., "ds": {"en":..,"ru":..}}
     },
-    "views": {"config_map": True, "connectors": True},
+    "views": {
+        # Google Fonts is the only request a page makes to anything but your own
+        # server. Off = system fonts and a page that phones nobody.
+        "web_fonts": True,"config_map": True, "connectors": True},
     "config_map": {"truth_ref": "origin/main"},
 }
 
@@ -245,9 +248,20 @@ class Config:
                 except (TypeError, ValueError):
                     errs.append(f"providers.paid[{i}].{k} must be a number")
         try:
-            int(self.get("timezone.offset_hours", 0))
+            off = int(self.get("timezone.offset_hours", 0))
+            # datetime.timezone() rejects anything outside (-24h, 24h); saving 24
+            # used to pass validation and then kill the build on the next run.
+            if not -23 <= off <= 23:
+                errs.append("timezone.offset_hours must be between -23 and 23")
         except (TypeError, ValueError):
             errs.append("timezone.offset_hours must be an integer")
+        for key in ("usage.stt_log_regex", "security.tirith_regex"):
+            pat = self.get(key, "")
+            if pat:
+                try:
+                    re.compile(str(pat))
+                except re.error as e:
+                    errs.append(f"{key} is not a valid regular expression ({e})")
         for lang in self.raw["i18n"].get("languages") or []:
             if not isinstance(lang, str) or len(lang) > 5:
                 errs.append(f"i18n.languages: bad entry {lang!r}")

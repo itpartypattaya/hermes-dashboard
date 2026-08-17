@@ -357,7 +357,18 @@ def build() -> str:
     cfg = current()
     jobs, background = load_jobs()
     if not jobs:
-        return ""
+        # Only interval jobs (or none the parser understands): there is no day
+        # axis to draw, but the economics, billing tiers and per-job telemetry
+        # are still real — returning "" here used to erase the whole view.
+        rest = efficiency_card() + billing_card() + job_telemetry_card()
+        if not (rest.strip() or background):
+            return ""
+        bg = ('<div class="blk"><h2><em>◆</em> ' + _("Background jobs") + ' <span>'
+              + _("no fixed time of day") + '</span></h2><div class="body"><div class="algo">'
+              + esc(" · ".join(sorted(background))) + '</div></div></div>') if background else ""
+        return sec(_("Day schedule and efficiency"),
+                   f'{cfg.get("timezone.name", "UTC")} · jobs.json + crontab · ' + _("run economics"),
+                   bg + rest)
     X0, X1 = 310, 790
     LBL, RIGHT, NAME_MAX, ROW_H, TOP = 0, 884, 44, 40, 52
     span = X1 - X0

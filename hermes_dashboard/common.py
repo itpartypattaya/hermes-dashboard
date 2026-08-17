@@ -87,11 +87,24 @@ def free_cond(cfg: Config | None = None) -> str:
 
 
 def fallback(cfg: Config | None = None) -> str:
+    """A *forced* fallback: paid, actually called, from an interactive source."""
     cfg = cfg or current()
     srcs = cfg.get("providers.fallback_sources", []) or []
     if not srcs:
-        return paid(cfg)
-    return "(" + paid(cfg) + " AND source IN (" + ",".join(_q(s) for s in srcs) + "))"
+        return "(" + paid(cfg) + " AND " + active() + ")"
+    return ("(" + paid(cfg) + " AND " + active()
+            + " AND source IN (" + ",".join(_q(s) for s in srcs) + "))")
+
+
+def deliberate_paid(cfg: Config | None = None) -> str:
+    """Paid work that nobody was forced into — a run started outside the
+    interactive sources. Complementary to fallback(), not its NOT()."""
+    cfg = cfg or current()
+    srcs = cfg.get("providers.fallback_sources", []) or []
+    c = "(" + paid(cfg) + " AND " + active()
+    if srcs:
+        c += " AND coalesce(source,'') NOT IN (" + ",".join(_q(s) for s in srcs) + ")"
+    return c + ")"
 
 
 def primary_id(cfg: Config | None = None) -> str:

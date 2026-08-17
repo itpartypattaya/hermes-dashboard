@@ -154,6 +154,172 @@ class I18nTests(unittest.TestCase):
         i18n.set_lang("en")
 
 
+class HardeningTests(unittest.TestCase):
+    """Regressions for the review round: each test fails on the old code."""
+
+    def test_language_code_is_whitelisted_and_escaped(self):
+        """?lang= is attacker-controlled and lands in <html lang> and a cookie."""
+        from hermes_dashboard import render
+        cfg = config.Config({"i18n": {"default": "en", "languages": ["en", "ru"]}})
+        config.set_current(cfg)
+        evil = '" onmouseover="alert(1)'
+        head = render.head(cfg, "t", evil)
+        self.assertNotIn('lang="" onmouseover=', head)
+        self.assertIn("&quot;", head.split("<head>")[0])
+        # and the JS literal cannot be broken out of
+        self.assertNotIn("</script>", render.jss("</script><script>"))
+        self.assertEqual(render.jss("a\r\nb"), "ab")
+
+    def test_settings_lang_falls_back_to_a_known_language(self):
+        from hermes_dashboard import settings as st
+
+        class FakeHeaders(dict):
+            def get(self, k, d=None):
+                return dict.get(self, k, d)
+
+        h = st.Handler.__new__(st.Handler)
+        h.state = type("S", (), {"cfg": config.Config(
+            {"i18n": {"default": "en", "languages": ["en", "ru"]}})})()
+        h.headers = FakeHeaders()
+        h.path = '/?lang=%22%20onmouseover%3D%22alert(1)'
+        self.assertEqual(h._lang(), "en")
+        h.path = "/?lang=ru"
+        self.assertEqual(h._lang(), "ru")
+        h.path = "/"
+        h.headers = FakeHeaders({"Cookie": "hd-lang=zz"})
+        self.assertEqual(h._lang(), "en", "an unknown cookie language must not pass through")
+
+    def test_cost_api_asks_for_a_legal_page_size(self):
+        """Daily buckets cap at 31; limit=32 is a 400 that used to be swallowed."""
+        from hermes_dashboard.collectors import anthropic_cost as ac
+        self.assertLessEqual(ac.MAX_DAILY_BUCKETS, 31)
+        src = (ROOT / "hermes_dashboard" / "collectors" / "anthropic_cost.py").read_text(encoding="utf-8")
+        self.assertIn("has_more", src, "pagination must be followed")
+
+    def test_concurrent_writers_never_collide_or_tear(self):
+        """Two builds writing the same page must not fight over a temp file.
+
+        The old code derived the temp name from the target (`index.html.tmp`),
+        so a cron build and a manual rebuild used the same path: one of them
+        failed to rename, or published bytes the other was still writing.
+        """
+        import threading
+        from hermes_dashboard import build as bld
+        d = Path(tempfile.mkdtemp(prefix="hd-atomic-"))
+        target = d / "index.html"
+        payloads = ["A" * 60000, "B" * 60000]
+        errors: list = []
+
+        def writer(text):
+            for _ in range(15):
+                try:
+                    bld._atomic_write(target, text)
+                except Exception as e:            # noqa: BLE001
+                    errors.append(repr(e))
+
+        ts = [threading.Thread(target=writer, args=(t,)) for t in payloads]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(errors, [], "concurrent writes must not fail")
+        self.assertIn(target.read_text(encoding="utf-8"), payloads, "the published page is torn")
+        self.assertEqual(list(d.glob("*.tmp")), [], "temp files must not be left behind")
+
+    def test_temp_names_are_unique_per_write(self):
+        """The guarantee behind the test above: no two writers share a path."""
+        from hermes_dashboard import build as bld
+        d = Path(tempfile.mkdtemp(prefix="hd-tmpname-"))
+        target = d / "index.html"
+        names = []
+        real = bld.tempfile.mkstemp
+
+        def spy(*a, **kw):
+            fd, name = real(*a, **kw)
+            names.append(name)
+            return fd, name
+
+        bld.tempfile.mkstemp = spy
+        try:
+            bld._atomic_write(target, "x")
+            bld._atomic_write(target, "y")
+        finally:
+            bld.tempfile.mkstemp = real
+        self.assertEqual(len(set(names)), 2, "temp paths must differ between writes")
+        for n in names:
+            self.assertNotEqual(n, str(target) + ".tmp")
+
+    def test_build_lock_keeps_a_second_build_out(self):
+        from hermes_dashboard import build as bld
+        d = Path(tempfile.mkdtemp(prefix="hd-lock-"))
+        first = bld._BuildLock(d).__enter__()
+        self.assertTrue(first.held)
+        second = bld._BuildLock(d).__enter__()
+        self.assertFalse(second.held)
+        first.__exit__(None, None, None)
+        third = bld._BuildLock(d).__enter__()
+        self.assertTrue(third.held, "the lock must be released, not leaked")
+        third.__exit__(None, None, None)
+
+    def test_validate_rejects_values_that_would_crash_the_build(self):
+        self.assertTrue(any("offset_hours" in e for e in
+                            config.Config({"timezone": {"offset_hours": 24}}).validate()))
+        self.assertEqual(config.Config({"timezone": {"offset_hours": -11}}).validate(), [])
+        self.assertTrue(any("stt_log_regex" in e for e in
+                            config.Config({"usage": {"stt_log_regex": "["}}).validate()))
+        self.assertTrue(any("tirith_regex" in e for e in
+                            config.Config({"security": {"tirith_regex": "(unclosed"}}).validate()))
+
+    def test_a_broken_section_costs_only_that_section(self):
+        from hermes_dashboard import build as bld
+
+        def boom():
+            raise RuntimeError("nope")
+
+        self.assertEqual(bld._safe("x", boom), "")
+        self.assertEqual(bld._safe("x", boom, ("", "")), ("", ""))
+        self.assertEqual(bld._safe("x", lambda: "fine"), "fine")
+
+    def test_passive_sessions_are_not_cost_and_not_fallback(self):
+        home = make_home()
+        os.environ["HERMES_HOME"] = str(home)
+        config.set_current(config.Config(PROVIDERS))
+        db = sqlite3.connect(home / "state.db")
+        # a paid provider row that never called the model
+        db.execute("INSERT INTO sessions (id, source, model, started_at, billing_provider, "
+                   "api_call_count) VALUES ('p1','telegram','claude-sonnet-5',?, 'anthropic', 0)",
+                   (time.time() - 100,))
+        db.commit()
+        db.close()
+        n = common.scalar("SELECT count(*) FROM sessions WHERE " + common.fallback())
+        self.assertEqual(n, 1, "a session with no model call is not a forced fallback")
+        d = common.scalar("SELECT count(*) FROM sessions WHERE " + common.deliberate_paid())
+        self.assertEqual(d, 1, "only the CLI run is deliberate paid work")
+
+    def test_web_fonts_can_be_turned_off(self):
+        from hermes_dashboard import render
+        on = config.Config({})
+        off = config.Config({"views": {"web_fonts": False}})
+        self.assertIn("fonts.googleapis.com", render.fonts(on))
+        self.assertNotIn("googleapis", render.fonts(off))
+        self.assertIn("--f-body", render.fonts(off), "system stack must replace the web fonts")
+
+    def test_csv_upload_lands_where_the_collector_reads(self):
+        from hermes_dashboard import settings as st
+        home = Path(tempfile.mkdtemp(prefix="hd-csv-"))
+        (home / "cache").mkdir()
+        cfg = config.Config({"providers": {"paid": [{"id": "anthropic", "cost_cache": "cache/x.json"}]}})
+        cfg.home = home
+        state = st.State(cfg)
+        # the name the collector globs for
+        self.assertTrue(state.csv_path().name.startswith("anthropic_"))
+        os.environ["HERMES_DASHBOARD_ANTHROPIC_COST_CSV"] = str(home / "explicit.csv")
+        try:
+            self.assertEqual(state.csv_path(), home / "explicit.csv")
+        finally:
+            del os.environ["HERMES_DASHBOARD_ANTHROPIC_COST_CSV"]
+
+
 class BuildTests(unittest.TestCase):
     def _build(self, home: Path, extra: dict | None = None) -> dict[str, str]:
         cfgp = home / "dashboard" / "dashboard.json"

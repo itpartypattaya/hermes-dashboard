@@ -21,6 +21,18 @@ FONTS = ('<link rel="preconnect" href="https://fonts.googleapis.com">'
          '<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;700;900'
          '&family=Onest:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700'
          '&display=swap" rel="stylesheet">')
+
+# Local stack used when views.web_fonts is off. The pages carry no other
+# external reference, so switching this off makes a page load reach nothing but
+# your own server — which is the point for a dashboard nobody else should know
+# you are reading.
+NO_WEB_FONTS = ('<style>:root{--f-dis:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
+                '--f-body:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
+                '--f-num:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}</style>')
+
+
+def fonts(cfg: Config) -> str:
+    return FONTS if cfg.get("views.web_fonts", True) else NO_WEB_FONTS
 THEME_KEY = "hd-theme"
 LANG_KEY = "hd-lang"
 
@@ -94,6 +106,17 @@ def view_list(cfg: Config) -> list[tuple[str, str]]:
     return views
 
 
+def jss(s: str) -> str:
+    """Escape a value for a JS string literal inside <script>.
+
+    The language code reaches this from a query string on the settings server,
+    so it is never trusted even after the whitelist upstream.
+    """
+    out = str(s).replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+    out = out.replace("<", "\\x3c").replace(">", "\\x3e")
+    return "".join(c for c in out if c not in "\r\n\u2028\u2029")
+
+
 def page_name(lang: str, cfg: Config, base: str = "index") -> str:
     return f"{base}.html" if lang == cfg.default_lang else f"{base}.{lang}.html"
 
@@ -110,18 +133,18 @@ def head(cfg: Config, title: str, lang: str, base: str = "index") -> str:
     if len(langs) > 1 and base != "settings":
         # first load of the default page: honour a remembered language
         pages = ",".join(f'"{l}":"{page_name(l, cfg, base)}"' for l in langs)
-        redirect = ('<script>try{var hl=localStorage.getItem("' + LANG_KEY + '"),cur="' + lang + '",'
+        redirect = ('<script>try{var hl=localStorage.getItem("' + LANG_KEY + '"),cur="' + jss(lang) + '",'
                     'pg={' + pages + '};if(hl&&hl!==cur&&pg[hl]&&!location.hash.match(/nolang/)){'
                     'location.replace(pg[hl]+location.hash)}}catch(e){}</script>')
     return (
-        f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
+        f'<!doctype html><html lang="{esc(lang)}"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<meta name="robots" content="noindex, nofollow">'
         f'<title>{esc(title)}</title>' + favicon_link(cfg)
         + '<script>try{var mt=localStorage.getItem("' + THEME_KEY + '")||'
         '(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");'
         'document.documentElement.setAttribute("data-theme",mt)}catch(e){}</script>'
-        + redirect + FONTS + f'<style>{read_style()}</style></head><body class="hasrail">'
+        + redirect + fonts(cfg) + f'<style>{read_style()}</style></head><body class="hasrail">'
     )
 
 
@@ -133,7 +156,7 @@ def lang_switch(cfg: Config, lang: str, base: str = "index", link_prefix: str = 
     for l in langs:
         on = " on" if l == lang else ""
         href = f"?lang={l}" if base == "settings" else link_prefix + page_name(l, cfg, base)
-        items += f'<a class="lsw{on}" data-lang="{l}" href="{href}">{l.upper()}</a>'
+        items += f'<a class="lsw{on}" data-lang="{esc(l)}" href="{esc(href)}">{esc(l.upper())}</a>'
     return f'<div class="langsw">{items}</div>'
 
 

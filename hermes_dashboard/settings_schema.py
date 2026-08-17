@@ -95,6 +95,11 @@ SCHEMA = [
                  "help": "Small line under the name — platform and server, for your own orientation."},
                 {"path": "agent.config_repo_label", "kind": "text", "label": "Footer line",
                  "help": "Printed in the page footer; usually where the config lives."},
+                {"path": "views.web_fonts", "kind": "bool", "label": "Load web fonts from Google",
+                 "help": "On: the designed typefaces, fetched from fonts.googleapis.com on every "
+                         "view — the only external request a page makes, and it tells Google your "
+                         "IP and when you opened the dashboard. Off: system fonts, nothing leaves "
+                         "your server."},
                 {"path": "agent.favicon", "kind": "text", "label": "Favicon file",
                  "help": "Browser-tab icon (.ico/.png/.svg), looked up in the agent home first, "
                          "then next to the engine. Inlined into every page, so keep it small; "
