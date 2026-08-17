@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 /public/
+
+# scratch worktrees from local verification runs
+/oldcheck_wt/
