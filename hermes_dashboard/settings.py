@@ -36,7 +36,7 @@ import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from . import render
 from .common import esc, read_json
@@ -783,7 +783,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _do_get_locked(self, path):
         lang = self._lang()
-        set_lang(lang)
+        set_lang(lang, allowed=self.state.cfg.languages, default=self.state.cfg.default_lang)
         if path.endswith("/log"):
             return self._send(self.state.build_log or _("no build yet"), ctype="text/plain; charset=utf-8")
         if path.endswith("/health"):
@@ -818,7 +818,9 @@ class Handler(BaseHTTPRequestHandler):
         else:
             for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items():
                 fields[k] = v[-1]          # checkbox: hidden "0" first, checked "1" wins
-        set_lang(fields.get("lang") or self._lang())
+        lang = set_lang(fields.get("lang") or self._lang(),
+                        allowed=self.state.cfg.languages,
+                        default=self.state.cfg.default_lang)
         if fields.get("_csrf") != self.state.token or not self._same_host():
             return self._send(_("Request rejected: bad or missing CSRF token."), 403, "text/plain; charset=utf-8")
         st = self.state
@@ -848,7 +850,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 st.flash("bad", _("Unknown action."))
         self.send_response(303)
-        self.send_header("Location", (urlparse(self.path).path or "/") + f"?lang={fields.get('lang', '')}")
+        # The value is allowlisted above, then encoded as a query parameter.
+        # Never interpolate request data into a response header.
+        self.send_header("Location", (urlparse(self.path).path or "/") + "?" + urlencode({"lang": lang}))
         self.end_headers()
 
 

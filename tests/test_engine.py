@@ -189,6 +189,42 @@ class HardeningTests(unittest.TestCase):
         h.headers = FakeHeaders({"Cookie": "hd-lang=zz"})
         self.assertEqual(h._lang(), "en", "an unknown cookie language must not pass through")
 
+    def test_set_lang_can_enforce_configured_allowlist(self):
+        self.assertEqual(i18n.set_lang('" onmouseover="x', ["en", "ru"], "en"), "en")
+        self.assertEqual(i18n.lang(), "en")
+        self.assertEqual(i18n.set_lang("ru", ["en", "ru"], "en"), "ru")
+
+    def test_settings_post_redirect_allowlists_and_encodes_lang(self):
+        from io import BytesIO
+        from hermes_dashboard import settings as st
+
+        cfg = config.Config({"i18n": {"default": "en", "languages": ["en", "ru", "日本"]}})
+        state = type("S", (), {"cfg": cfg, "token": "csrf", "lock": __import__("threading").Lock(),
+                                "messages": [], "flash": lambda self, kind, text: None})()
+        h = st.Handler.__new__(st.Handler)
+        h.state, h.path = state, "/settings/"  # type: ignore[assignment]
+        h.headers = {"Content-Length": "0", "Content-Type": "application/x-www-form-urlencoded",  # type: ignore[assignment]
+                     "Origin": "http://localhost", "Host": "localhost"}
+        h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=%0d%0aX-Evil%3A%201")
+        h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+        sent = []
+        h.send_response = lambda code: sent.append(("status", code))  # type: ignore[assignment]
+        h.send_header = lambda key, value: sent.append((key, value))  # type: ignore[assignment]
+        h.end_headers = lambda: None
+        h._send = lambda *args, **kwargs: sent.append(("body", args[0] if args else ""))
+        h._do_post_locked()
+        location = dict((k, v) for k, v in sent if k == "Location")["Location"]
+        self.assertEqual(location, "/settings/?lang=en")
+        self.assertNotIn("\r", location)
+        self.assertNotIn("\n", location)
+
+        h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=%E6%97%A5%E6%9C%AC")
+        h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+        sent.clear()
+        h._do_post_locked()
+        location = dict((k, v) for k, v in sent if k == "Location")["Location"]
+        self.assertEqual(location, "/settings/?lang=%E6%97%A5%E6%9C%AC")
+
     def test_cost_api_asks_for_a_legal_page_size(self):
         """Daily buckets cap at 31; limit=32 is a 400 that used to be swallowed."""
         from hermes_dashboard.collectors import anthropic_cost as ac
