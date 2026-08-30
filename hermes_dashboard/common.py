@@ -118,6 +118,18 @@ def tz() -> timezone:
     return timezone(timedelta(hours=hours))
 
 
+def local_day(col: str = "started_at") -> str:
+    """SQL for the calendar day of `col` in the *configured* timezone.
+
+    SQLite's 'localtime' means the timezone of the machine, which on most VPS
+    images is UTC while timezone.offset_hours is the owner's own zone. With the
+    two disagreeing, everything before the offset hour landed in the previous
+    day on the daily chart while the event feed — formatted through tz() —
+    showed the right one: two answers to "which day" on the same page.
+    """
+    return "date(" + col + " + " + str(int(tz().utcoffset(None).total_seconds())) + ", 'unixepoch')"
+
+
 def tz_label() -> str:
     return str(current().get("timezone.label", "UTC"))
 
@@ -220,9 +232,18 @@ def is_paid_row(prov: str, model: str, cfg: Config | None = None) -> bool:
 
 
 def paid_label(prov: str, model: str = "", cfg: Config | None = None) -> str:
+    """Label of the paid provider this row belongs to.
+
+    Matches on model as well as id, like paid() and is_paid_row(): one id can
+    carry both a paid slot and a free key, and matching on the id alone put the
+    paid provider's label on a free session.
+    """
     cfg = cfg or current()
     for p in cfg.get("providers.paid", []):
-        if prov == p.get("id"):
+        if prov == p.get("id") and is_paid_row(prov, model, cfg):
+            return str(p.get("label") or prov)
+    for p in cfg.get("providers.free", []):
+        if prov == p.get("id") and (not p.get("model") or p.get("model") == model):
             return str(p.get("label") or prov)
     return model or prov
 
@@ -271,7 +292,14 @@ ESC = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}
 
 
 def esc(s) -> str:
-    return "".join(ESC.get(c, c) for c in str(s or ""))
+    """HTML-escape any value. Only None is empty.
+
+    `str(s or "")` used to turn 0, 0.0 and False into a blank — so a bar or a
+    tile whose value was legitimately zero rendered as nothing at all, which is
+    exactly the "absent vs zero" confusion this dashboard refuses to make
+    everywhere else.
+    """
+    return "".join(ESC.get(c, c) for c in ("" if s is None else str(s)))
 
 
 def fmt_tok(n) -> str:

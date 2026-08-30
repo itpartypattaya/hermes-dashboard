@@ -420,6 +420,48 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(ac._error_message(err(b"<html>oops</html>")), "(unparseable error body)")
         self.assertEqual(ac._error_message(err(b'{"error":{}}')), "(no message in the error body)")
 
+    # ── third sweep ────────────────────────────────────────────────────────
+
+    def test_one_definition_of_which_day(self):
+        """SQLite 'localtime' is the machine's zone, tz() is the configured one.
+
+        On a VPS running UTC with offset_hours=7, everything before 07:00 fell
+        into the previous day on the daily chart while the event feed showed the
+        right one — two answers to the same question on one page.
+        """
+        from datetime import datetime, timedelta, timezone as _tz
+        config.set_current(config.Config({"timezone": {"offset_hours": 7}}))
+        cfg_tz = _tz(timedelta(hours=7))
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE s(started_at REAL)")
+        for hour in (0, 2, 6, 12, 23):
+            e = datetime(2026, 8, 30, hour, 0, tzinfo=cfg_tz).timestamp()
+            db.execute("DELETE FROM s")
+            db.execute("INSERT INTO s VALUES (?)", (e,))
+            in_sql = db.execute("SELECT " + common.local_day() + " FROM s").fetchone()[0]
+            in_feed = datetime.fromtimestamp(e, cfg_tz).strftime("%Y-%m-%d")
+            self.assertEqual(in_sql, in_feed, f"chart and feed disagree for {hour:02d}:00")
+        self.assertNotIn("localtime", common.local_day())
+
+    def test_the_label_of_a_free_row_is_not_the_paid_one(self):
+        """paid_label() matched on provider id alone while its two twins matched
+        on the model too — one id can carry a paid slot and a free key."""
+        config.set_current(config.Config({"providers": {
+            "paid": [{"id": "gemini", "label": "PAID", "model_like": "gemini-%",
+                      "exclude_models": ["gemini-2.5-flash"]}],
+            "free": [{"id": "gemini", "model": "gemini-2.5-flash", "label": "FREE"}]}}))
+        self.assertEqual(common.paid_label("gemini", "gemini-3.0-pro"), "PAID")
+        self.assertEqual(common.paid_label("gemini", "gemini-2.5-flash"), "FREE")
+        self.assertEqual(common.paid_label("nobody", "some-model"), "some-model")
+
+    def test_zero_is_rendered_not_swallowed(self):
+        """esc() used `str(s or "")`, so a legitimate zero rendered as blank."""
+        self.assertEqual(common.esc(0), "0")
+        self.assertEqual(common.esc(0.0), "0.0")
+        self.assertEqual(common.esc(None), "")
+        self.assertEqual(common.esc("<b>"), "&lt;b&gt;")
+        self.assertIn(">0<", common.simple_bar("l", 0, 100, "c", value_txt=0))
+
     # ── second sweep: classes not covered by the first ─────────────────────
 
     def test_read_text_safe_never_raises_on_content(self):

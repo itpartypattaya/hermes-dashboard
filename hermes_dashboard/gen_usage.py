@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from . import gen_chats
 from .common import (
     active, connect_ro, esc, eff_bar, fmt_tok, fmt_usd, free_cond, home,
-    metrics, num, primary_id, provider_cond, read_json, remain_color, sec,
+    local_day, metrics, num, primary_id, provider_cond, read_json, remain_color, sec,
     simple_bar, sql_str, ubar, yaml_get,
 )
 from .config import current
@@ -317,10 +317,10 @@ def build() -> tuple[str, str]:
             "SELECT tool_name, count(*) c FROM messages WHERE tool_name IS NOT NULL AND tool_name != '' "
             "AND timestamp >= strftime('%s','now','-30 days') GROUP BY tool_name").fetchall()
         day_rows = db.execute(
-            "SELECT date(started_at,'unixepoch','localtime') d, count(*) c FROM sessions "
+            "SELECT " + local_day() + " d, count(*) c FROM sessions "
             "WHERE " + active() + " AND started_at >= strftime('%s','now','-30 days') GROUP BY d").fetchall()
         day_tok_rows = db.execute(
-            "SELECT date(started_at,'unixepoch','localtime') d, coalesce(sum(input_tokens),0) i,"
+            "SELECT " + local_day() + " d, coalesce(sum(input_tokens),0) i,"
             " coalesce(sum(output_tokens),0) o, coalesce(sum(reasoning_tokens),0) r,"
             " coalesce(sum(cache_read_tokens),0) c FROM sessions "
             "WHERE started_at >= strftime('%s','now','-30 days') GROUP BY d").fetchall()
