@@ -518,9 +518,11 @@ def render_field(cfg: Config, data: dict, f: dict, langs: list[str]) -> str:
 # ── page ────────────────────────────────────────────────────────────────
 
 def _csrf(state: State, lang: str, action: str) -> str:
-    return (f'<input type="hidden" name="_csrf" value="{state.token}">'
-            f'<input type="hidden" name="action" value="{action}">'
-            f'<input type="hidden" name="lang" value="{lang}">')
+    # Keep every request-derived value in the HTML attribute context escaped;
+    # the language should already be allowlisted, but this is defense in depth.
+    return (f'<input type="hidden" name="_csrf" value="{esc(state.token)}">'
+            f'<input type="hidden" name="action" value="{esc(action)}">'
+            f'<input type="hidden" name="lang" value="{esc(lang)}">')
 
 
 def build_page(state: State, lang: str, host: dict) -> str:
@@ -818,11 +820,11 @@ class Handler(BaseHTTPRequestHandler):
         else:
             for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items():
                 fields[k] = v[-1]          # checkbox: hidden "0" first, checked "1" wins
+        if fields.get("_csrf") != self.state.token or not self._same_host():
+            return self._send(_("Request rejected: bad or missing CSRF token."), 403, "text/plain; charset=utf-8")
         lang = set_lang(fields.get("lang") or self._lang(),
                         allowed=self.state.cfg.languages,
                         default=self.state.cfg.default_lang)
-        if fields.get("_csrf") != self.state.token or not self._same_host():
-            return self._send(_("Request rejected: bad or missing CSRF token."), 403, "text/plain; charset=utf-8")
         st = self.state
         action = fields.get("action", "")
         with st.lock:

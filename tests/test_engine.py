@@ -225,6 +225,31 @@ class HardeningTests(unittest.TestCase):
         location = dict((k, v) for k, v in sent if k == "Location")["Location"]
         self.assertEqual(location, "/settings/?lang=%E6%97%A5%E6%9C%AC")
 
+        for payload in (b'" onmouseover="alert(1)', b'<script>alert(1)</script>', b'unknown', b''):
+            h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=" + payload.replace(b" ", b"%20"))
+            h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+            sent.clear()
+            h._do_post_locked()
+            location = dict((k, v) for k, v in sent if k == "Location")["Location"]
+            self.assertEqual(location, "/settings/?lang=en")
+            self.assertEqual(i18n.lang(), "en")
+
+        h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=ru")
+        h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+        sent.clear()
+        h._do_post_locked()
+        self.assertEqual(dict((k, v) for k, v in sent if k == "Location")["Location"], "/settings/?lang=ru")
+
+    def test_csrf_hidden_fields_escape_html_attributes(self):
+        from hermes_dashboard import settings as st
+
+        state = type("S", (), {"token": 'csrf\"&<',})()
+        markup = st._csrf(state, '" onfocus="alert(1)', '<script>')  # type: ignore[arg-type]
+        self.assertNotIn('csrf"&<', markup)
+        self.assertIn("csrf&quot;&amp;&lt;", markup)
+        self.assertIn("&quot; onfocus=&quot;alert(1)", markup)
+        self.assertIn("&lt;script&gt;", markup)
+
     def test_cost_api_asks_for_a_legal_page_size(self):
         """Daily buckets cap at 31; limit=32 is a 400 that used to be swallowed."""
         from hermes_dashboard.collectors import anthropic_cost as ac
