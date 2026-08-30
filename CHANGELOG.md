@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.5.0 — 2026-08-30
+
+First outside contributions, from **@jedi108** (Vadim Tsurkov).
+
+**Security (#1).** The settings POST handler took `lang` from the form body and put it
+straight into `set_lang()` and into the `Location` header, so a decoded CRLF was HTTP
+response-header injection. The v0.4.0 whitelist had only covered the GET/cookie path.
+The language is now validated on both paths and the redirect is built with `urlencode`.
+The same PR added a Content-Security-Policy and `X-Content-Type-Options`/`Referrer-Policy`
+to settings responses, `hmac.compare_digest` for the CSRF check, `HttpOnly`/`Secure` on
+the language cookie, `Content-Length` validation, and IPv6-correct same-host matching.
+
+**Robustness (from #2, reworked).** The unique-temp-file fix that v0.4.0 applied to
+`build.py` was missing from every other writer — `settings._atomic`, the CSV upload,
+`history._write` and both collector caches all still derived the temp name from the
+target. They share one `common.atomic_write()` now. Subprocesses we spawn no longer
+inherit the agent's credentials: `child_environment()` strips anything credential-shaped
+while keeping what a host needs to function (trust store, proxy, locale, and the Windows
+variables without which a subprocess cannot start at all). Provider HTTP errors log the
+parsed `error.message` instead of a raw network-controlled body.
+
+Not adopted from #2: confining `out_dir` inside the Hermes home (a webroot never is —
+it stops the build on every documented deployment) and a hardcoded `HOME`. Both are now
+guarded by tests.
+
+Tests: 32 → 43.
+
+
 ## v0.4.0 — 2026-08-16
 
 A review round; every item below has a test that fails on the previous release.
