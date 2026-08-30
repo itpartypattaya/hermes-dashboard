@@ -28,6 +28,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import tempfile
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -92,10 +93,10 @@ def _fetch_api(key: str) -> list[dict] | None:
                 body = e.read().decode("utf-8", "replace")[:300]
             except Exception:
                 pass
-            print("[anthropic_cost] cost_report HTTP %s: %s" % (e.code, body), file=sys.stderr)
+            print("[anthropic_cost] cost_report HTTP %s (provider response redacted)" % e.code, file=sys.stderr)
             return None
-        except (urllib.error.URLError, ValueError, OSError) as e:
-            print("[anthropic_cost] cost_report unreachable: %s" % (e,), file=sys.stderr)
+        except (urllib.error.URLError, ValueError, OSError):
+            print("[anthropic_cost] cost_report unreachable (details redacted)", file=sys.stderr)
             return None
         out.extend(payload.get("data") or [])
         if not payload.get("has_more"):
@@ -123,8 +124,14 @@ def _from_api(key: str) -> dict | None:
 # ─────────────────────── source 2: CSV Cost Report ───────────────────────
 def _csv_source() -> Path | None:
     explicit = os.environ.get("HERMES_DASHBOARD_ANTHROPIC_COST_CSV", "").strip()
-    if explicit and Path(explicit).is_file():
-        return Path(explicit)
+    if explicit:
+        p = Path(explicit).expanduser().resolve(strict=False)
+        try:
+            p.relative_to(HOME.expanduser().resolve())
+        except ValueError:
+            return None
+        if p.is_file():
+            return p
     cache_dir = HOME / "cache"
     if not cache_dir.is_dir():
         return None
@@ -248,8 +255,10 @@ def main() -> int:
         return 0  # no source — the dashboard stays on the token-based estimate
 
     CACHE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CACHE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=CACHE.parent,
+                                     prefix=f".{CACHE.name}.", delete=False) as fh:
+        fh.write(json.dumps(out, ensure_ascii=False, indent=2))
+        tmp = Path(fh.name)
     tmp.replace(CACHE)
     return 0
 

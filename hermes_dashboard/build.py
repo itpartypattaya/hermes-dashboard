@@ -21,7 +21,7 @@ from . import (gen_banner, gen_connectors, gen_cron, gen_events, gen_security, g
                history, render, sysinfo)
 from .common import (active, deliberate_paid, esc, fallback, fmt_tok, home, paid, scalar,
                      yaml_get)
-from .config import Config, load_budgets_env, load_config, set_current
+from .config import Config, child_environment, load_budgets_env, load_config, set_current
 from .i18n import _, set_lang
 
 
@@ -62,10 +62,10 @@ def collect_kpis(cfg: Config) -> dict:
 def run_collectors(cfg: Config) -> None:
     """Refresh JSON caches (fail-open: an error leaves the previous cache)."""
     py = cfg.venv_python or sys.executable
-    env = dict(os.environ, HERMES_HOME=str(cfg.home),
-               HERMES_DASHBOARD_TZ_OFFSET_H=str(cfg.get("timezone.offset_hours", 0)),
-               HERMES_DASHBOARD_PROVIDER=str(cfg.get("providers.primary.id", "openai-codex")),
-               PYTHONPATH=str(Path(__file__).parent.parent))
+    env = child_environment(cfg.home, extra={
+        "HERMES_DASHBOARD_TZ_OFFSET_H": str(cfg.get("timezone.offset_hours", 0)),
+        "HERMES_DASHBOARD_PROVIDER": str(cfg.get("providers.primary.id", "openai-codex")),
+        "PYTHONPATH": str(Path(__file__).parent.parent)})
     jobs = []
     if cfg.get("providers.primary.quota_cache"):
         jobs.append([py, "-m", "hermes_dashboard.collectors.codex_quota", "--write-cache"])
@@ -83,10 +83,11 @@ def run_collectors(cfg: Config) -> None:
 
 
 def memory_facts(cfg: Config) -> dict:
-    def chars(rel: str) -> int:
+    def chars(rel: str | Path) -> int:
         try:
-            return len((home() / rel).read_text(encoding="utf-8"))
-        except OSError:
+            p = rel if isinstance(rel, Path) else cfg.path_in_home(str(rel))
+            return len(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             return 0
 
     def limit(key: str, dflt: int) -> int:
@@ -95,13 +96,13 @@ def memory_facts(cfg: Config) -> dict:
         except ValueError:
             return dflt
 
-    memch = chars(cfg.get("memory.memory_file", "memories/MEMORY.md"))
-    userch = chars(cfg.get("memory.user_file", "memories/USER.md"))
+    memch = chars(cfg.path_in_home(str(cfg.get("memory.memory_file", "memories/MEMORY.md"))))
+    userch = chars(str(cfg.get("memory.user_file", "memories/USER.md")))
     memlim = limit("memory_char_limit", int(cfg.get("memory.memory_char_limit_default", 2600)))
     userlim = limit("user_char_limit", int(cfg.get("memory.user_char_limit_default", 1700)))
     try:
-        ment = (home() / cfg.get("memory.memory_file", "memories/MEMORY.md")).read_text(encoding="utf-8").count("§")
-    except OSError:
+        ment = cfg.path_in_home(str(cfg.get("memory.memory_file", "memories/MEMORY.md"))).read_text(encoding="utf-8").count("§")
+    except (OSError, ValueError):
         ment = 0
     return {"MEMCH": memch, "USERCH": userch, "MEMLIM": memlim, "USERLIM": userlim, "MEMENT": ment,
             # no declared limit → no percentage; a made-up denominator would be a lie
@@ -292,8 +293,8 @@ def config_map_html(cfg: Config, lang: str) -> str:
     py = cfg.venv_python
     html = ""
     if py and Path(py).is_file():
-        env = dict(os.environ, HERMES_HOME=str(cfg.home), HERMES_DASHBOARD_LANG=lang,
-                   PYTHONPATH=str(Path(__file__).parent.parent))
+        env = child_environment(cfg.home, extra={"HERMES_DASHBOARD_LANG": lang,
+                                                  "PYTHONPATH": str(Path(__file__).parent.parent)})
         if cfg.path:
             env["HERMES_DASHBOARD_CONFIG"] = str(cfg.path)
         try:

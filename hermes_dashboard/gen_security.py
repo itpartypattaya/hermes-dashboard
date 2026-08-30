@@ -31,7 +31,10 @@ def tirith_failures_7d() -> int | None:
     n = 0
     seen = False
     for name in cfg.get("security.log_files", []):
-        p = home() / name
+        try:
+            p = cfg.path_in_home(name)
+        except ValueError:
+            continue
         if not p.is_file():
             continue
         seen = True
@@ -79,13 +82,16 @@ def file_git_date(rel: str) -> str:
             return out
     except (OSError, subprocess.SubprocessError):
         pass
-    p = home() / rel
+    try:
+        p = current().path_in_home(rel)
+    except ValueError:
+        return "—"
     return datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d") if p.is_file() else "—"
 
 
 def evals_count(rel: str) -> int:
     try:
-        d = json.loads((home() / rel).read_text(encoding="utf-8"))
+        d = json.loads(current().path_in_home(rel).read_text(encoding="utf-8"))
         return len(d.get("evals", [])) if isinstance(d, dict) else len(d)
     except (OSError, ValueError, TypeError):
         return 0
