@@ -217,6 +217,19 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(location, "/settings/?lang=en")
         self.assertNotIn("\r", location)
         self.assertNotIn("\n", location)
+        self.assertEqual([k for k, _ in sent if k not in ("status", "body")], ["Location"])
+
+        # Exercise both parser representations: a percent-encoded CRLF becomes
+        # a decoded value before the handler sees it, while raw CRLF is already
+        # decoded in a hand-built request body. Neither may reach a header.
+        for payload in (b"%0d%0aX-Evil%3a%201", b"\r\nX-Evil: 1"):
+            h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=" + payload)
+            h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+            sent.clear()
+            h._do_post_locked()
+            headers = [(k, v) for k, v in sent if k not in ("status", "body")]
+            self.assertEqual(headers, [("Location", "/settings/?lang=en")])
+            self.assertNotRegex(headers[0][1], r"[\r\n]")
 
         h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=%E6%97%A5%E6%9C%AC")
         h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
@@ -239,6 +252,37 @@ class HardeningTests(unittest.TestCase):
         sent.clear()
         h._do_post_locked()
         self.assertEqual(dict((k, v) for k, v in sent if k == "Location")["Location"], "/settings/?lang=ru")
+
+    def test_settings_get_keeps_language_in_state_cookie_and_form_safe(self):
+        """GET must apply the same allowlist to every reflected lang sink."""
+        from hermes_dashboard import settings as st
+
+        cfg = config.Config({"i18n": {"default": "en", "languages": ["en", "ru", "日本"]}})
+        state = type("S", (), {"cfg": cfg})()
+        h = st.Handler.__new__(st.Handler)
+        h.state = state  # type: ignore[assignment]
+        h.path = "/settings/?lang=%22%20onfocus%3D%22alert(1)%0d%0aX"
+        h.headers = {"Host": "localhost"}  # type: ignore[assignment]
+        captured = {}
+        original_build_page = st.build_page
+
+        def fake_build_page(_state, lang, host):
+            captured["page"] = (lang, host)
+            return "<safe>"
+
+        st.build_page = fake_build_page
+        h._host_info = lambda: {}
+        h._send = lambda body, status=200, ctype="text/html; charset=utf-8", extra=None: captured.update(
+            body=body, status=status, ctype=ctype, extra=extra or {})
+        try:
+            h._do_get_locked("/settings/")
+        finally:
+            st.build_page = original_build_page
+        self.assertEqual(captured["page"][0], "en")
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["ctype"], "text/html; charset=utf-8")
+        self.assertEqual(captured["extra"], {"Set-Cookie": "hd-lang=en; Path=/; SameSite=Lax"})
+        self.assertNotIn("X-Evil", captured["extra"]["Set-Cookie"])
 
     def test_csrf_hidden_fields_escape_html_attributes(self):
         from hermes_dashboard import settings as st
