@@ -219,6 +219,14 @@ class HardeningTests(unittest.TestCase):
         self.assertNotIn("\n", location)
         self.assertEqual([k for k, _ in sent if k not in ("status", "body")], ["Location"])
 
+        h.headers["Origin"] = "https://attacker.example"
+        sent.clear()
+        h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=ru")
+        h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+        h._do_post_locked()
+        self.assertEqual(sent, [("body", "Request rejected: bad or missing CSRF token.")])
+        h.headers["Origin"] = "http://localhost"
+
         # Exercise both parser representations: a percent-encoded CRLF becomes
         # a decoded value before the handler sees it, while raw CRLF is already
         # decoded in a hand-built request body. Neither may reach a header.
@@ -281,8 +289,30 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(captured["page"][0], "en")
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["ctype"], "text/html; charset=utf-8")
-        self.assertEqual(captured["extra"], {"Set-Cookie": "hd-lang=en; Path=/; SameSite=Lax"})
+        self.assertEqual(captured["extra"], {"Set-Cookie": "hd-lang=en; Path=/; HttpOnly; SameSite=Lax"})
         self.assertNotIn("X-Evil", captured["extra"]["Set-Cookie"])
+
+    def test_security_headers_and_https_cookie_flag(self):
+        from io import BytesIO
+        from hermes_dashboard import settings as st
+
+        h = st.Handler.__new__(st.Handler)
+        sent = []
+        h.send_response = lambda code: sent.append(("status", code))
+        h.send_header = lambda key, value: sent.append((key, value))
+        h.end_headers = lambda: None
+        h.wfile = BytesIO()
+        h._send("ok")
+        headers = dict((k, v) for k, v in sent if k not in ("status",))
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+        self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        self.assertIn("script-src 'self' 'unsafe-inline'", headers["Content-Security-Policy"])
+
+        h.headers = {"X-Forwarded-Proto": "http"}
+        self.assertFalse(h._https_request())
+        h.headers["X-Forwarded-Proto"] = "https, http"
+        self.assertTrue(h._https_request())
 
     def test_csrf_hidden_fields_escape_html_attributes(self):
         from hermes_dashboard import settings as st
