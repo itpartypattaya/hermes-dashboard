@@ -737,6 +737,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Robots-Tag", "noindex")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        # The page currently has inline style/script blocks. Keep those working,
+        # while restricting every other resource and all navigation targets.
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; "
+            "base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
+            "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' "
+            "https://fonts.googleapis.com; img-src 'self' data:; "
+            "font-src 'self' https://fonts.gstatic.com; connect-src 'self'",
+        )
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -780,6 +792,10 @@ class Handler(BaseHTTPRequestHandler):
                 "gwt": _("running") if gw == "active" else gw,
                 "sync": sysinfo.last_sync(), "sha": sha, "commit": commit}
 
+    def _https_request(self) -> bool:
+        """Whether the trusted proxy presented this request over HTTPS."""
+        return (self.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower() == "https"
+
     # set_lang() is process-wide state and ThreadingHTTPServer answers requests
     # in parallel: without this, two browsers on different languages hand each
     # other half-translated pages. The page is cheap, so one lock is enough.
@@ -799,7 +815,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(json.dumps({"ok": True, "building": self.state.build_running}),
                               ctype="application/json")
         return self._send(build_page(self.state, lang, self._host_info()),
-                          extra={"Set-Cookie": f"hd-lang={lang}; Path=/; SameSite=Lax"})
+                          extra={"Set-Cookie": f"hd-lang={lang}; Path=/; HttpOnly; SameSite=Lax"
+                                 + ("; Secure" if self._https_request() else "")})
 
     def do_POST(self):
         with self._render_lock:
