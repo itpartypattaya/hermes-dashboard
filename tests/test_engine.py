@@ -294,6 +294,30 @@ class HardeningTests(unittest.TestCase):
         self.assertIn("&quot; onfocus=&quot;alert(1)", markup)
         self.assertIn("&lt;script&gt;", markup)
 
+    def test_post_rejects_invalid_content_length_and_ipv6_origin_mismatch(self):
+        from io import BytesIO
+        from hermes_dashboard import settings as st
+
+        state = type("S", (), {"cfg": config.Config({}), "token": "csrf"})()
+        h = st.Handler.__new__(st.Handler)
+        h.state, h.path = state, "/settings/"
+        h.rfile = BytesIO(b"")
+        sent = []
+        h.send_response = lambda code: sent.append(("status", code))
+        h.send_header = lambda key, value: sent.append((key, value))
+        h.end_headers = lambda: None
+        h.wfile = BytesIO()
+        h._send = lambda body, status=200, ctype="text/html; charset=utf-8", extra=None: sent.append(("body", status))
+
+        for value in ("not-a-number", "-1"):
+            h.headers = {"Content-Length": value}
+            sent.clear()
+            h._do_post_locked()
+            self.assertEqual(sent, [("body", 400)])
+
+        h.headers = {"Content-Length": "0", "Origin": "http://[::1]", "Host": "[::2]"}
+        self.assertFalse(h._same_host(), "different IPv6 hosts must not pass same-host validation")
+
     def test_cost_api_asks_for_a_legal_page_size(self):
         """Daily buckets cap at 31; limit=32 is a 400 that used to be swallowed."""
         from hermes_dashboard.collectors import anthropic_cost as ac

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import email.parser
+import hmac
 import json
 import os
 import re
@@ -746,7 +747,13 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or ""
         if not origin:
             return True
-        return urlparse(origin).netloc.split(":")[0] == host.split(":")[0]
+        try:
+            origin_host = urlparse(origin).hostname
+            request_host = urlparse("//" + host).hostname
+        except ValueError:
+            return False
+        return bool(origin_host and request_host
+                    and origin_host.rstrip(".").lower() == request_host.rstrip(".").lower())
 
     def _lang(self) -> str:
         """Active language — ONLY ever one of cfg.languages.
@@ -799,7 +806,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._do_post_locked()
 
     def _do_post_locked(self):
-        length = int(self.headers.get("Content-Length") or 0)
+        raw_length = self.headers.get("Content-Length")
+        try:
+            length = int(raw_length) if raw_length is not None else 0
+        except (TypeError, ValueError):
+            return self._send("invalid Content-Length", 400, "text/plain; charset=utf-8")
+        if length < 0:
+            return self._send("invalid Content-Length", 400, "text/plain; charset=utf-8")
         if length > MAX_UPLOAD + 262144:
             return self._send("payload too large", 413, "text/plain")
         raw = self.rfile.read(length)
@@ -820,7 +833,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items():
                 fields[k] = v[-1]          # checkbox: hidden "0" first, checked "1" wins
-        if fields.get("_csrf") != self.state.token or not self._same_host():
+        if not hmac.compare_digest(fields.get("_csrf", ""), self.state.token) or not self._same_host():
             return self._send(_("Request rejected: bad or missing CSRF token."), 403, "text/plain; charset=utf-8")
         lang = set_lang(fields.get("lang") or self._lang(),
                         allowed=self.state.cfg.languages,
