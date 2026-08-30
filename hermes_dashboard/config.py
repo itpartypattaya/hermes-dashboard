@@ -153,6 +153,43 @@ def _deep_merge(base: dict, over: dict) -> dict:
 _ENV_LINE_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
 
 
+# Names that look like somebody's credentials. The dashboard's own children
+# need exactly one credential family (the Anthropic admin key, below); anything
+# else matching this belongs to the agent, not to us.
+_SECRET_ENV_RE = re.compile(
+    r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|_AUTH|OAUTH|SESSION|COOKIE|"
+    r"^SSH_|^AWS_|^AZURE_|^GCP_|^GOOGLE_APPLICATION|^GITHUB_|^GH_)", re.I)
+
+# Read from the environment by our own collectors — must survive the strip.
+_CHILD_ENV_KEEP = ("HERMES_DASHBOARD_ANTHROPIC_ADMIN_KEY", "ANTHROPIC_ADMIN_KEY")
+
+
+def child_environment(home: Path, extra: dict | None = None) -> dict:
+    """Environment for a process the dashboard spawns, minus other people's secrets.
+
+    This is a *denylist*, deliberately, and the choice is worth explaining. A
+    default-deny allowlist is the stronger shape, but it has to enumerate
+    everything an unknown host needs to work at all: PATH, HOME, the TLS trust
+    store (SSL_CERT_FILE, REQUESTS_CA_BUNDLE), proxy variables, VIRTUAL_ENV,
+    locale, TMPDIR, and on Windows SYSTEMROOT/COMSPEC/PATHEXT without which a
+    subprocess cannot even start. Miss one and a collector fails on somebody
+    else's machine, silently — which is the failure mode this dashboard exists
+    to prevent. A missed *secret* name leaks nothing by itself: the child is
+    our own code, and the point is only to shrink what it could ever spill.
+
+    So: keep the environment, drop what is shaped like a credential, then put
+    back the one credential our own collector documents that it reads.
+    """
+    keep = {k: v for k, v in os.environ.items() if not _SECRET_ENV_RE.search(k)}
+    for name in _CHILD_ENV_KEEP:
+        if name in os.environ:
+            keep[name] = os.environ[name]
+    keep["HERMES_HOME"] = str(home)
+    for k, v in (extra or {}).items():
+        keep[str(k)] = str(v)
+    return keep
+
+
 def load_budgets_env(cfg: "Config") -> dict[str, str]:
     """Read paths.budgets_env (KEY=value shell file) into os.environ.
 

@@ -40,8 +40,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from . import render
-from .common import esc, read_json
-from .config import Config, load_config, set_current
+from .common import atomic_write, esc, read_json
+from .config import Config, child_environment, load_config, set_current
 from .i18n import _, set_lang
 from .settings_schema import BUDGET_HELP, SCHEMA
 
@@ -337,11 +337,7 @@ class State:
         head = data[:4096].decode("utf-8", "ignore").lower()
         if "cost" not in head or "," not in head:
             return "this does not look like a cost export CSV (no «cost» column in the header)"
-        p = self.csv_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".tmp")
-        tmp.write_bytes(data)
-        tmp.replace(p)
+        atomic_write(self.csv_path(), data)
         return None
 
     def rebuild(self) -> None:
@@ -351,7 +347,7 @@ class State:
 
         def run():
             cmd = [sys.executable, "-m", "hermes_dashboard.build", "--config", str(self.cfg_path())]
-            env = dict(os.environ, HERMES_HOME=str(self.cfg.home), PYTHONPATH=str(Path(__file__).parent.parent))
+            env = child_environment(self.cfg.home, {"PYTHONPATH": str(Path(__file__).parent.parent)})
             try:
                 r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
                 self.build_log = f"$ {' '.join(cmd)}\nrc={r.returncode}\n" + (r.stdout + r.stderr)[-6000:]
@@ -364,9 +360,7 @@ class State:
 
 
 def _atomic(p: Path, text: str) -> None:
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(p)
+    atomic_write(p, text)
 
 
 def _age_txt(p: Path) -> str:

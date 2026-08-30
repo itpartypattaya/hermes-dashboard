@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -35,6 +36,26 @@ PROVIDER = os.environ.get("HERMES_DASHBOARD_PROVIDER", "openai-codex")
 # it "5 hours" — the label was a guess, not data. The dashboard shows the duration
 # computed from reset_at (reset_in_h) instead.
 WINDOW_LABELS = {"session": "session window", "weekly": "weekly window"}
+
+
+
+def _atomic_json(target: Path, payload) -> None:
+    """Write the cache in one step; a build may be reading it right now.
+
+    Local rather than shared because a collector is spawned as its own process
+    under the agent's venv python and must import as little as possible.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix="." + target.name + ".",
+                                    suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False, indent=2))
+        tmp.replace(target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _fetch_snapshot():
@@ -115,10 +136,7 @@ def _write_cache() -> int:
     if data is None:
         # fail-open: do not overwrite the previous cache with a fresh failure
         return 0
-    CACHE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CACHE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(CACHE)
+    _atomic_json(CACHE, data)
     return 0
 
 

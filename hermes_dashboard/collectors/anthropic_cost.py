@@ -25,6 +25,7 @@ import csv
 import json
 import os
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -38,6 +39,26 @@ ENDPOINT = "https://api.anthropic.com/v1/organizations/cost_report"
 
 
 # ─────────────────────── source 1: Admin Cost API ────────────────────────
+
+def _atomic_json(target: Path, payload) -> None:
+    """Write the cache in one step; a build may be reading it right now.
+
+    Local rather than shared because a collector is spawned as its own process
+    under the agent's venv python and must import as little as possible.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix="." + target.name + ".",
+                                    suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False, indent=2))
+        tmp.replace(target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def _admin_key() -> str:
     for name in ("HERMES_DASHBOARD_ANTHROPIC_ADMIN_KEY", "ANTHROPIC_ADMIN_KEY"):
         v = os.environ.get(name, "").strip()
@@ -60,6 +81,23 @@ def _admin_key() -> str:
 # more is a 400, and a swallowed 400 looks exactly like "no data" — the cache
 # silently stays on an old CSV. Hence: legal page size + follow next_page.
 MAX_DAILY_BUCKETS = 31
+
+
+def _error_message(e) -> str:
+    """The provider's own error text, without echoing the raw body.
+
+    The message is the whole point of logging a failure ("limit: 32 is greater
+    than the maximum of 31" is the difference between a fixed bug and a silent
+    one), but a raw body is an unbounded string from the network that ends up
+    in a log someone may paste. So: parse the documented error envelope and
+    print only its message, truncated; anything else becomes a shrug.
+    """
+    try:
+        payload = json.loads(e.read().decode("utf-8", "replace"))
+        msg = (payload.get("error") or {}).get("message")
+        return str(msg)[:200] if msg else "(no message in the error body)"
+    except Exception:
+        return "(unparseable error body)"
 
 
 def _fetch_api(key: str) -> list[dict] | None:
@@ -87,12 +125,8 @@ def _fetch_api(key: str) -> list[dict] | None:
             with urllib.request.urlopen(req, timeout=20) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            body = ""
-            try:
-                body = e.read().decode("utf-8", "replace")[:300]
-            except Exception:
-                pass
-            print("[anthropic_cost] cost_report HTTP %s: %s" % (e.code, body), file=sys.stderr)
+            print("[anthropic_cost] cost_report HTTP %s: %s" % (e.code, _error_message(e)),
+                  file=sys.stderr)
             return None
         except (urllib.error.URLError, ValueError, OSError) as e:
             print("[anthropic_cost] cost_report unreachable: %s" % (e,), file=sys.stderr)
@@ -247,10 +281,7 @@ def main() -> int:
     if out is None:
         return 0  # no source — the dashboard stays on the token-based estimate
 
-    CACHE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CACHE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(CACHE)
+    _atomic_json(CACHE, out)
     return 0
 
 

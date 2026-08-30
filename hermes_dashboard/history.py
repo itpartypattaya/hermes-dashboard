@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -48,15 +49,13 @@ def _load() -> list[dict]:
 
 
 def _write(rows: list[dict]) -> None:
-    hist = _hist_path()
-    hist.parent.mkdir(parents=True, exist_ok=True)
-    tmp = hist.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=COLS, extrasaction="ignore")
-        w.writeheader()
-        for r in rows:
-            w.writerow({c: r.get(c, "") for c in COLS})
-    tmp.replace(hist)
+    from .common import atomic_write
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=COLS, extrasaction="ignore")
+    w.writeheader()
+    for r in rows:
+        w.writerow({c: r.get(c, "") for c in COLS})
+    atomic_write(_hist_path(), buf.getvalue())
 
 
 def _update(rows: list[dict], today: str, values: dict) -> list[dict]:

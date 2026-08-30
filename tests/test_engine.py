@@ -348,6 +348,78 @@ class HardeningTests(unittest.TestCase):
         h.headers = {"Content-Length": "0", "Origin": "http://[::1]", "Host": "[::2]"}
         self.assertFalse(h._same_host(), "different IPv6 hosts must not pass same-host validation")
 
+    def test_every_writer_uses_a_unique_temp_name(self):
+        """The race fixed in build.py also lived in settings, history and both caches."""
+        import inspect
+        from hermes_dashboard import history, settings as st
+        from hermes_dashboard.collectors import anthropic_cost, codex_quota
+        for mod in (st, history, anthropic_cost, codex_quota):
+            src = inspect.getsource(mod)
+            self.assertNotIn('with_suffix(".tmp")', src,
+                             f"{mod.__name__} still derives its temp name from the target")
+
+    def test_atomic_write_handles_text_and_bytes(self):
+        d = Path(tempfile.mkdtemp(prefix="hd-aw-"))
+        common.atomic_write(d / "a.txt", "hello")
+        common.atomic_write(d / "b.bin", b"\x00\x01")
+        self.assertEqual((d / "a.txt").read_text(encoding="utf-8"), "hello")
+        self.assertEqual((d / "b.bin").read_bytes(), b"\x00\x01")
+        self.assertEqual(list(d.glob("*.tmp")), [])
+        # writes into a directory that does not exist yet
+        common.atomic_write(d / "sub" / "c.txt", "x")
+        self.assertEqual((d / "sub" / "c.txt").read_text(encoding="utf-8"), "x")
+
+    def test_child_environment_drops_secrets_but_keeps_the_platform(self):
+        """Rework of PR #2: a denylist, so an unknown host still works.
+
+        A strict allowlist broke TLS trust stores, proxies and Windows spawning;
+        the point here is only to stop handing the agent's credentials to our
+        own subprocesses.
+        """
+        saved = dict(os.environ)
+        try:
+            os.environ.update({
+                "ANTHROPIC_ADMIN_KEY": "sk-admin", "TELEGRAM_BOT_TOKEN": "t",
+                "AWS_SECRET_ACCESS_KEY": "a", "SSH_AUTH_SOCK": "/tmp/s",
+                "GITHUB_TOKEN": "g", "SSL_CERT_FILE": "/etc/ssl/cert.pem",
+                "HTTPS_PROXY": "http://proxy:3128", "PATH": os.environ.get("PATH", "/usr/bin"),
+            })
+            env = config.child_environment(Path("/tmp/home"), {"PYTHONPATH": "/engine"})
+            for gone in ("TELEGRAM_BOT_TOKEN", "AWS_SECRET_ACCESS_KEY", "SSH_AUTH_SOCK",
+                         "GITHUB_TOKEN"):
+                self.assertNotIn(gone, env, f"{gone} must not reach a child process")
+            for kept in ("PATH", "SSL_CERT_FILE", "HTTPS_PROXY"):
+                self.assertIn(kept, env, f"{kept} is needed for the child to work at all")
+            self.assertEqual(env["ANTHROPIC_ADMIN_KEY"], "sk-admin",
+                             "the collector documents that it reads this one")
+            self.assertEqual(env["HERMES_HOME"], str(Path("/tmp/home")))
+            self.assertEqual(env["PYTHONPATH"], "/engine")
+            self.assertNotIn("HOME", config._CHILD_ENV_KEEP,
+                             "HOME must never be hardcoded to a packager's path")
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+
+    def test_out_dir_outside_the_agent_home_stays_legal(self):
+        """A webroot is never inside ~/.hermes — confining it breaks deployment."""
+        cfg = config.Config({"paths": {"hermes_home": "/srv/agent/.hermes",
+                                       "out_dir": "/var/www/dashboard"}})
+        self.assertEqual(cfg.validate(), [])
+        self.assertEqual(str(cfg.out_dir).replace("\\", "/"), "/var/www/dashboard")
+
+    def test_provider_error_keeps_the_message_not_the_body(self):
+        import io as _io
+        import urllib.error
+        from hermes_dashboard.collectors import anthropic_cost as ac
+
+        def err(payload: bytes):
+            return urllib.error.HTTPError("u", 400, "Bad Request", {}, _io.BytesIO(payload))
+
+        msg = ac._error_message(err(b'{"error":{"message":"limit: 32 is greater than 31"}}'))
+        self.assertEqual(msg, "limit: 32 is greater than 31")
+        self.assertEqual(ac._error_message(err(b"<html>oops</html>")), "(unparseable error body)")
+        self.assertEqual(ac._error_message(err(b'{"error":{}}')), "(no message in the error body)")
+
     def test_cost_api_asks_for_a_legal_page_size(self):
         """Daily buckets cap at 31; limit=32 is a 400 that used to be swallowed."""
         from hermes_dashboard.collectors import anthropic_cost as ac

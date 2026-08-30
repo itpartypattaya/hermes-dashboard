@@ -19,9 +19,9 @@ from pathlib import Path
 
 from . import (gen_banner, gen_connectors, gen_cron, gen_events, gen_security, gen_usage,
                history, render, sysinfo)
-from .common import (active, deliberate_paid, esc, fallback, fmt_tok, home, paid, scalar,
-                     yaml_get)
-from .config import Config, load_budgets_env, load_config, set_current
+from .common import (active, atomic_write, deliberate_paid, esc, fallback, fmt_tok, home,
+                     paid, scalar, yaml_get)
+from .config import Config, child_environment, load_budgets_env, load_config, set_current
 from .i18n import _, set_lang
 
 
@@ -62,10 +62,10 @@ def collect_kpis(cfg: Config) -> dict:
 def run_collectors(cfg: Config) -> None:
     """Refresh JSON caches (fail-open: an error leaves the previous cache)."""
     py = cfg.venv_python or sys.executable
-    env = dict(os.environ, HERMES_HOME=str(cfg.home),
-               HERMES_DASHBOARD_TZ_OFFSET_H=str(cfg.get("timezone.offset_hours", 0)),
-               HERMES_DASHBOARD_PROVIDER=str(cfg.get("providers.primary.id", "openai-codex")),
-               PYTHONPATH=str(Path(__file__).parent.parent))
+    env = child_environment(cfg.home, {
+        "HERMES_DASHBOARD_TZ_OFFSET_H": str(cfg.get("timezone.offset_hours", 0)),
+        "HERMES_DASHBOARD_PROVIDER": str(cfg.get("providers.primary.id", "openai-codex")),
+        "PYTHONPATH": str(Path(__file__).parent.parent)})
     jobs = []
     if cfg.get("providers.primary.quota_cache"):
         jobs.append([py, "-m", "hermes_dashboard.collectors.codex_quota", "--write-cache"])
@@ -292,8 +292,8 @@ def config_map_html(cfg: Config, lang: str) -> str:
     py = cfg.venv_python
     html = ""
     if py and Path(py).is_file():
-        env = dict(os.environ, HERMES_HOME=str(cfg.home), HERMES_DASHBOARD_LANG=lang,
-                   PYTHONPATH=str(Path(__file__).parent.parent))
+        env = child_environment(cfg.home, {"HERMES_DASHBOARD_LANG": lang,
+                                           "PYTHONPATH": str(Path(__file__).parent.parent)})
         if cfg.path:
             env["HERMES_DASHBOARD_CONFIG"] = str(cfg.path)
         try:
@@ -400,32 +400,8 @@ def build_all(cfg: Config, only_lang: str | None = None, out_dir: Path | None = 
 
 
 def _atomic_write(target: Path, text: str) -> None:
-    """Write via a temp file unique to this process.
-
-    A shared `<name>.tmp` is a race: cron and a manual rebuild overlap, both
-    write the same temp path, and one of them either fails to rename or
-    publishes a page the other was still writing.
-    """
-    fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        os.chmod(tmp, 0o644)
-        # POSIX renames over an open file happily; Windows refuses while any
-        # reader holds the target, which on a page served to a browser is a
-        # matter of milliseconds. Retry briefly instead of losing the build.
-        for attempt in range(10):
-            try:
-                tmp.replace(target)
-                break
-            except PermissionError:
-                if attempt == 9:
-                    raise
-                time.sleep(0.05)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    """Publish one page. See common.atomic_write for why the temp name is unique."""
+    atomic_write(target, text)
 
 
 class _BuildLock:

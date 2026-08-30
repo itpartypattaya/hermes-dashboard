@@ -15,12 +15,54 @@ Session classification (fragments for `WHERE` on `sessions`):
 """
 from __future__ import annotations
 
+import os
 import sqlite3
+import tempfile
+import time
 from datetime import timedelta, timezone
 from pathlib import Path
 
 from .config import Config, current
 from .i18n import _
+
+
+def atomic_write(target: Path, data, mode: int = 0o644) -> None:
+    """Publish a file in one step, safely against a concurrent writer.
+
+    Every writer here can run twice at once — cron and a manual rebuild, the
+    build and the settings server. A temp name derived from the target (the old
+    `<name>.tmp`) means both writers use the same path: one loses its rename,
+    or a reader sees bytes from both. The temp name is therefore unique per
+    call, and lands in the target's own directory so the rename stays on one
+    filesystem (a cross-device rename is not atomic).
+
+    `data` may be str or bytes. The rename retries briefly because Windows
+    refuses to replace a file while a reader holds it; POSIX does not care.
+    """
+    binary = isinstance(data, (bytes, bytearray))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix="." + target.name + ".",
+                                    suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        if binary:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+        else:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+                fh.write(data)
+        os.chmod(tmp, mode)
+        for attempt in range(10):
+            try:
+                tmp.replace(target)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.05)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def home() -> Path:
