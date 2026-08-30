@@ -27,9 +27,18 @@ def available() -> list[str]:
     return langs
 
 
-def set_lang(lang: str) -> None:
+def set_lang(lang: str, allowed: list[str] | None = None, default: str = "en") -> str:
+    """Select a locale and return the effective language.
+
+    ``lang`` may originate in a request, so callers handling untrusted input
+    can pass the configured allowlist.  Returning the effective value makes it
+    harder for a caller to validate one value and render another.
+    """
     global _lang, _table
-    _lang = lang or "en"
+    if allowed is not None:
+        _lang = lang if lang in allowed else (default if default in allowed else allowed[0])
+    else:
+        _lang = lang or default
     _table = {}
     p = LOCALES / f"{_lang}.json"
     if _lang != "en" and p.is_file():
@@ -39,6 +48,7 @@ def set_lang(lang: str) -> None:
                 _table = {str(k): str(v) for k, v in data.items()}
         except (OSError, ValueError):
             _table = {}
+    return _lang
 
 
 def lang() -> str:

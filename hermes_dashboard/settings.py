@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import email.parser
+import hmac
 import json
 import os
 import re
@@ -36,7 +37,7 @@ import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from . import render
 from .common import esc, read_json
@@ -518,9 +519,11 @@ def render_field(cfg: Config, data: dict, f: dict, langs: list[str]) -> str:
 # ── page ────────────────────────────────────────────────────────────────
 
 def _csrf(state: State, lang: str, action: str) -> str:
-    return (f'<input type="hidden" name="_csrf" value="{state.token}">'
-            f'<input type="hidden" name="action" value="{action}">'
-            f'<input type="hidden" name="lang" value="{lang}">')
+    # Keep every request-derived value in the HTML attribute context escaped;
+    # the language should already be allowlisted, but this is defense in depth.
+    return (f'<input type="hidden" name="_csrf" value="{esc(state.token)}">'
+            f'<input type="hidden" name="action" value="{esc(action)}">'
+            f'<input type="hidden" name="lang" value="{esc(lang)}">')
 
 
 def build_page(state: State, lang: str, host: dict) -> str:
@@ -734,6 +737,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Robots-Tag", "noindex")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        # The page currently has inline style/script blocks. Keep those working,
+        # while restricting every other resource and all navigation targets.
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; "
+            "base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
+            "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' "
+            "https://fonts.googleapis.com; img-src 'self' data:; "
+            "font-src 'self' https://fonts.gstatic.com; connect-src 'self'",
+        )
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -744,7 +759,13 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or ""
         if not origin:
             return True
-        return urlparse(origin).netloc.split(":")[0] == host.split(":")[0]
+        try:
+            origin_host = urlparse(origin).hostname
+            request_host = urlparse("//" + host).hostname
+        except ValueError:
+            return False
+        return bool(origin_host and request_host
+                    and origin_host.rstrip(".").lower() == request_host.rstrip(".").lower())
 
     def _lang(self) -> str:
         """Active language — ONLY ever one of cfg.languages.
@@ -771,6 +792,10 @@ class Handler(BaseHTTPRequestHandler):
                 "gwt": _("running") if gw == "active" else gw,
                 "sync": sysinfo.last_sync(), "sha": sha, "commit": commit}
 
+    def _https_request(self) -> bool:
+        """Whether the trusted proxy presented this request over HTTPS."""
+        return (self.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower() == "https"
+
     # set_lang() is process-wide state and ThreadingHTTPServer answers requests
     # in parallel: without this, two browsers on different languages hand each
     # other half-translated pages. The page is cheap, so one lock is enough.
@@ -783,21 +808,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def _do_get_locked(self, path):
         lang = self._lang()
-        set_lang(lang)
+        set_lang(lang, allowed=self.state.cfg.languages, default=self.state.cfg.default_lang)
         if path.endswith("/log"):
             return self._send(self.state.build_log or _("no build yet"), ctype="text/plain; charset=utf-8")
         if path.endswith("/health"):
             return self._send(json.dumps({"ok": True, "building": self.state.build_running}),
                               ctype="application/json")
         return self._send(build_page(self.state, lang, self._host_info()),
-                          extra={"Set-Cookie": f"hd-lang={lang}; Path=/; SameSite=Lax"})
+                          extra={"Set-Cookie": f"hd-lang={lang}; Path=/; HttpOnly; SameSite=Lax"
+                                 + ("; Secure" if self._https_request() else "")})
 
     def do_POST(self):
         with self._render_lock:
             return self._do_post_locked()
 
     def _do_post_locked(self):
-        length = int(self.headers.get("Content-Length") or 0)
+        raw_length = self.headers.get("Content-Length")
+        try:
+            length = int(raw_length) if raw_length is not None else 0
+        except (TypeError, ValueError):
+            return self._send("invalid Content-Length", 400, "text/plain; charset=utf-8")
+        if length < 0:
+            return self._send("invalid Content-Length", 400, "text/plain; charset=utf-8")
         if length > MAX_UPLOAD + 262144:
             return self._send("payload too large", 413, "text/plain")
         raw = self.rfile.read(length)
@@ -818,9 +850,11 @@ class Handler(BaseHTTPRequestHandler):
         else:
             for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items():
                 fields[k] = v[-1]          # checkbox: hidden "0" first, checked "1" wins
-        set_lang(fields.get("lang") or self._lang())
-        if fields.get("_csrf") != self.state.token or not self._same_host():
+        if not hmac.compare_digest(fields.get("_csrf", ""), self.state.token) or not self._same_host():
             return self._send(_("Request rejected: bad or missing CSRF token."), 403, "text/plain; charset=utf-8")
+        lang = set_lang(fields.get("lang") or self._lang(),
+                        allowed=self.state.cfg.languages,
+                        default=self.state.cfg.default_lang)
         st = self.state
         action = fields.get("action", "")
         with st.lock:
@@ -848,7 +882,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 st.flash("bad", _("Unknown action."))
         self.send_response(303)
-        self.send_header("Location", (urlparse(self.path).path or "/") + f"?lang={fields.get('lang', '')}")
+        # The value is allowlisted above, then encoded as a query parameter.
+        # Never interpolate request data into a response header.
+        self.send_header("Location", (urlparse(self.path).path or "/") + "?" + urlencode({"lang": lang}))
         self.end_headers()
 
 

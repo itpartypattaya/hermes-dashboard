@@ -189,6 +189,165 @@ class HardeningTests(unittest.TestCase):
         h.headers = FakeHeaders({"Cookie": "hd-lang=zz"})
         self.assertEqual(h._lang(), "en", "an unknown cookie language must not pass through")
 
+    def test_set_lang_can_enforce_configured_allowlist(self):
+        self.assertEqual(i18n.set_lang('" onmouseover="x', ["en", "ru"], "en"), "en")
+        self.assertEqual(i18n.lang(), "en")
+        self.assertEqual(i18n.set_lang("ru", ["en", "ru"], "en"), "ru")
+
+    def test_settings_post_redirect_allowlists_and_encodes_lang(self):
+        from io import BytesIO
+        from hermes_dashboard import settings as st
+
+        cfg = config.Config({"i18n": {"default": "en", "languages": ["en", "ru", "日本"]}})
+        state = type("S", (), {"cfg": cfg, "token": "csrf", "lock": __import__("threading").Lock(),
+                                "messages": [], "flash": lambda self, kind, text: None})()
+        h = st.Handler.__new__(st.Handler)
+        h.state, h.path = state, "/settings/"  # type: ignore[assignment]
+        h.headers = {"Content-Length": "0", "Content-Type": "application/x-www-form-urlencoded",  # type: ignore[assignment]
+                     "Origin": "http://localhost", "Host": "localhost"}
+        h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=%0d%0aX-Evil%3A%201")
+        h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+        sent = []
+        h.send_response = lambda code: sent.append(("status", code))  # type: ignore[assignment]
+        h.send_header = lambda key, value: sent.append((key, value))  # type: ignore[assignment]
+        h.end_headers = lambda: None
+        h._send = lambda *args, **kwargs: sent.append(("body", args[0] if args else ""))
+        h._do_post_locked()
+        location = dict((k, v) for k, v in sent if k == "Location")["Location"]
+        self.assertEqual(location, "/settings/?lang=en")
+        self.assertNotIn("\r", location)
+        self.assertNotIn("\n", location)
+        self.assertEqual([k for k, _ in sent if k not in ("status", "body")], ["Location"])
+
+        h.headers["Origin"] = "https://attacker.example"
+        sent.clear()
+        h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=ru")
+        h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+        h._do_post_locked()
+        self.assertEqual(sent, [("body", "Request rejected: bad or missing CSRF token.")])
+        h.headers["Origin"] = "http://localhost"
+
+        # Exercise both parser representations: a percent-encoded CRLF becomes
+        # a decoded value before the handler sees it, while raw CRLF is already
+        # decoded in a hand-built request body. Neither may reach a header.
+        for payload in (b"%0d%0aX-Evil%3a%201", b"\r\nX-Evil: 1"):
+            h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=" + payload)
+            h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+            sent.clear()
+            h._do_post_locked()
+            headers = [(k, v) for k, v in sent if k not in ("status", "body")]
+            self.assertEqual(headers, [("Location", "/settings/?lang=en")])
+            self.assertNotRegex(headers[0][1], r"[\r\n]")
+
+        h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=%E6%97%A5%E6%9C%AC")
+        h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+        sent.clear()
+        h._do_post_locked()
+        location = dict((k, v) for k, v in sent if k == "Location")["Location"]
+        self.assertEqual(location, "/settings/?lang=%E6%97%A5%E6%9C%AC")
+
+        for payload in (b'" onmouseover="alert(1)', b'<script>alert(1)</script>', b'unknown', b''):
+            h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=" + payload.replace(b" ", b"%20"))
+            h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+            sent.clear()
+            h._do_post_locked()
+            location = dict((k, v) for k, v in sent if k == "Location")["Location"]
+            self.assertEqual(location, "/settings/?lang=en")
+            self.assertEqual(i18n.lang(), "en")
+
+        h.rfile = BytesIO(b"_csrf=csrf&action=unknown&lang=ru")
+        h.headers["Content-Length"] = str(len(h.rfile.getvalue()))
+        sent.clear()
+        h._do_post_locked()
+        self.assertEqual(dict((k, v) for k, v in sent if k == "Location")["Location"], "/settings/?lang=ru")
+
+    def test_settings_get_keeps_language_in_state_cookie_and_form_safe(self):
+        """GET must apply the same allowlist to every reflected lang sink."""
+        from hermes_dashboard import settings as st
+
+        cfg = config.Config({"i18n": {"default": "en", "languages": ["en", "ru", "日本"]}})
+        state = type("S", (), {"cfg": cfg})()
+        h = st.Handler.__new__(st.Handler)
+        h.state = state  # type: ignore[assignment]
+        h.path = "/settings/?lang=%22%20onfocus%3D%22alert(1)%0d%0aX"
+        h.headers = {"Host": "localhost"}  # type: ignore[assignment]
+        captured = {}
+        original_build_page = st.build_page
+
+        def fake_build_page(_state, lang, host):
+            captured["page"] = (lang, host)
+            return "<safe>"
+
+        st.build_page = fake_build_page
+        h._host_info = lambda: {}
+        h._send = lambda body, status=200, ctype="text/html; charset=utf-8", extra=None: captured.update(
+            body=body, status=status, ctype=ctype, extra=extra or {})
+        try:
+            h._do_get_locked("/settings/")
+        finally:
+            st.build_page = original_build_page
+        self.assertEqual(captured["page"][0], "en")
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["ctype"], "text/html; charset=utf-8")
+        self.assertEqual(captured["extra"], {"Set-Cookie": "hd-lang=en; Path=/; HttpOnly; SameSite=Lax"})
+        self.assertNotIn("X-Evil", captured["extra"]["Set-Cookie"])
+
+    def test_security_headers_and_https_cookie_flag(self):
+        from io import BytesIO
+        from hermes_dashboard import settings as st
+
+        h = st.Handler.__new__(st.Handler)
+        sent = []
+        h.send_response = lambda code: sent.append(("status", code))
+        h.send_header = lambda key, value: sent.append((key, value))
+        h.end_headers = lambda: None
+        h.wfile = BytesIO()
+        h._send("ok")
+        headers = dict((k, v) for k, v in sent if k not in ("status",))
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+        self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        self.assertIn("script-src 'self' 'unsafe-inline'", headers["Content-Security-Policy"])
+
+        h.headers = {"X-Forwarded-Proto": "http"}
+        self.assertFalse(h._https_request())
+        h.headers["X-Forwarded-Proto"] = "https, http"
+        self.assertTrue(h._https_request())
+
+    def test_csrf_hidden_fields_escape_html_attributes(self):
+        from hermes_dashboard import settings as st
+
+        state = type("S", (), {"token": 'csrf\"&<',})()
+        markup = st._csrf(state, '" onfocus="alert(1)', '<script>')  # type: ignore[arg-type]
+        self.assertNotIn('csrf"&<', markup)
+        self.assertIn("csrf&quot;&amp;&lt;", markup)
+        self.assertIn("&quot; onfocus=&quot;alert(1)", markup)
+        self.assertIn("&lt;script&gt;", markup)
+
+    def test_post_rejects_invalid_content_length_and_ipv6_origin_mismatch(self):
+        from io import BytesIO
+        from hermes_dashboard import settings as st
+
+        state = type("S", (), {"cfg": config.Config({}), "token": "csrf"})()
+        h = st.Handler.__new__(st.Handler)
+        h.state, h.path = state, "/settings/"
+        h.rfile = BytesIO(b"")
+        sent = []
+        h.send_response = lambda code: sent.append(("status", code))
+        h.send_header = lambda key, value: sent.append((key, value))
+        h.end_headers = lambda: None
+        h.wfile = BytesIO()
+        h._send = lambda body, status=200, ctype="text/html; charset=utf-8", extra=None: sent.append(("body", status))
+
+        for value in ("not-a-number", "-1"):
+            h.headers = {"Content-Length": value}
+            sent.clear()
+            h._do_post_locked()
+            self.assertEqual(sent, [("body", 400)])
+
+        h.headers = {"Content-Length": "0", "Origin": "http://[::1]", "Host": "[::2]"}
+        self.assertFalse(h._same_host(), "different IPv6 hosts must not pass same-host validation")
+
     def test_cost_api_asks_for_a_legal_page_size(self):
         """Daily buckets cap at 31; limit=32 is a 400 that used to be swallowed."""
         from hermes_dashboard.collectors import anthropic_cost as ac
