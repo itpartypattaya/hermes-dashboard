@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.5.1 — 2026-08-30
+
+A sweep prompted by the two outside PRs: both had found a place where an earlier
+fix of mine had landed in one call site and not its siblings. So each class of bug
+fixed in v0.4.0 and v0.5.0 was grepped across the whole repository. Five more
+instances turned up, each now covered by a test that fails on v0.5.0.
+
+* **Shared temp names** — `gen_config` still wrote its cached page through
+  `<cache>.tmp`. The sixth writer; the other five were fixed in v0.4.0 and v0.5.0.
+* **SQL literals from config** — the primary-provider card built
+  `billing_provider='{pid}'` by hand while every other fragment goes through the
+  quoting helper (now public as `sql_str`). An apostrophe in a provider id produced
+  broken SQL and, since v0.4.0 contains section failures, a silently missing card.
+* **Validated on save, not on read** — `tz()` still raised on an offset that
+  `validate()` rejects, and `dashboard.json` is a file the README tells you to edit
+  by hand. It falls back to UTC now; validation stays the loud path.
+* **The activity rule** — per-job cron telemetry counted sessions that never called
+  a model, and expressed the rule as a hand-typed copy of `active()` elsewhere.
+* **Escaping in the redirect script** — the language map sat unescaped in the same
+  expression as the value escaped in v0.4.0, and `i18n.languages` was checked for
+  length rather than charset, so `a"b` and `../x` passed. A language code becomes
+  both a JS object key and a filename; the charset check makes both safe by
+  construction.
+
+Also verified, and left alone because it was already correct: every string that
+originates in the agent rather than in the engine — chat titles, job names,
+`last_error`, model and source names, tool names, log lines, the git commit
+subject — is escaped. A build with markup injected into all of them produces no
+raw payload in either page.
+
+Tests: 43 → 48.
+
+
 ## v0.5.0 — 2026-08-30
 
 First outside contributions, from **@jedi108** (Vadim Tsurkov).
