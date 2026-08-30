@@ -235,6 +235,20 @@ class Config:
     def __getitem__(self, key: str):
         return self.raw[key]
 
+    def number(self, dotted: str, default=0, cast=float):
+        """A numeric setting, or `default` if it is not one.
+
+        validate() rejects a non-number when the form saves it, but
+        dashboard.json is edited by hand; without this the read path raises and
+        (since v0.4.0 contains sections) the card silently disappears instead
+        of showing the default it was going to show anyway.
+        """
+        raw = self.get(dotted, default)
+        try:
+            return cast(raw)
+        except (TypeError, ValueError):
+            return cast(default)
+
     def path_in_home(self, rel: str) -> Path:
         p = Path(os.path.expanduser(str(rel)))
         return p if p.is_absolute() else self.home / p
@@ -285,6 +299,18 @@ class Config:
                     float(p.get(k, 0))
                 except (TypeError, ValueError):
                     errs.append(f"providers.paid[{i}].{k} must be a number")
+        for key, cast in (("providers.primary.subscription_usd_month", float),
+                          ("providers.primary.weekly_input_budget", float),
+                          ("providers.primary.ref_in_per_m", float),
+                          ("providers.primary.ref_out_per_m", float),
+                          ("providers.cost_fresh_days", int),
+                          ("memory.memory_char_limit_default", int),
+                          ("memory.user_char_limit_default", int)):
+            raw = self.get(key, 0)
+            try:
+                cast(raw)
+            except (TypeError, ValueError):
+                errs.append(f"{key} must be a number (got {raw!r})")
         try:
             off = int(self.get("timezone.offset_hours", 0))
             # datetime.timezone() rejects anything outside (-24h, 24h); saving 24

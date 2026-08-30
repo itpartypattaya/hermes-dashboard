@@ -19,7 +19,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-from .common import env_key_names, esc, home, jobs_path
+from .common import env_key_names, esc, home, jobs_path, read_text_safe
 from .config import Config, current
 from .i18n import _, set_lang
 from . import render, sysinfo
@@ -42,7 +42,7 @@ def load_yaml_config() -> dict:
         return {}
     try:
         import yaml  # type: ignore
-        return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        return yaml.safe_load(read_text_safe(p)) or {}
     except ImportError:
         pass
     except Exception as e:  # noqa: BLE001
@@ -66,7 +66,7 @@ def our_skill_names() -> list[str]:
     names: list[str] = []
     if current().get("connectors.skills_from_gitignore", True):
         try:
-            for line in (home() / ".gitignore").read_text(encoding="utf-8").splitlines():
+            for line in read_text_safe(home() / ".gitignore").splitlines():
                 m = re.match(r"!/skills/([^/]+)/\s*$", line.strip())
                 if m:
                     names.append(m.group(1))
@@ -83,7 +83,7 @@ def our_skill_names() -> list[str]:
 def skill_desc(name: str) -> str:
     """First sentence of the SKILL.md front-matter description."""
     try:
-        txt = (home() / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+        txt = read_text_safe(home() / "skills" / name / "SKILL.md")
     except OSError:
         return ""
     m = re.search(r"^description:\s*(.+?)$", txt, re.M)
@@ -170,7 +170,7 @@ def build_plugins(cfg: Config, y: dict, lang: str) -> list[dict]:
         manifest = pdir / n / "plugin.yaml"
         if manifest.is_file():
             try:
-                txt = manifest.read_text(encoding="utf-8")
+                txt = read_text_safe(manifest)
                 m = re.search(r"^description:\s*(.*)$", txt, re.M)
                 if m:
                     d = m.group(1).strip()

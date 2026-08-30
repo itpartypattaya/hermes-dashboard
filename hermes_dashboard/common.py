@@ -26,6 +26,25 @@ from .config import Config, current
 from .i18n import _
 
 
+def read_text_safe(path: Path, default: str = "") -> str:
+    """Read a file the agent wrote, surviving whatever is actually in it.
+
+    `read_text(encoding="utf-8")` raises UnicodeDecodeError on a single bad
+    byte — and UnicodeDecodeError is a ValueError, so every `except OSError`
+    around these reads let it through. A killed writer leaves a truncated
+    multibyte sequence in exactly the files we read (memories, logs, config),
+    and the result was a build that produced no pages at all.
+
+    A replacement character in one label is a far better outcome than a
+    dashboard frozen on yesterday, so decoding is lenient; a missing or
+    unreadable file still returns `default`.
+    """
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return default
+
+
 def atomic_write(target: Path, data, mode: int = 0o644) -> None:
     """Publish a file in one step, safely against a concurrent writer.
 
@@ -173,17 +192,28 @@ def primary_id(cfg: Config | None = None) -> str:
 
 
 def is_paid_row(prov: str, model: str, cfg: Config | None = None) -> bool:
-    """Python twin of paid() for single rows (banner, chain state)."""
+    """Python twin of paid() for single rows (banner, chain state).
+
+    Must reach the same verdict as the SQL, or the routing banner and the cost
+    card contradict each other on the same page. Two traps live here:
+
+    * SQLite `LIKE` is case-insensitive for ASCII, while `fnmatch.fnmatch`
+      folds case only where the *filesystem* does — so this used to agree on
+      Windows and disagree on Linux, which is where it actually runs.
+      `fnmatchcase` on lowered strings makes the rule explicit instead of
+      platform-dependent.
+    * `<>` in SQL is case-sensitive, so exclude_models stays an exact match.
+    """
+    import fnmatch
     cfg = cfg or current()
+    model = model or ""
     for p in cfg.get("providers.paid", []):
         if prov != p.get("id"):
             continue
         ml = p.get("model_like")
-        if ml:
-            import fnmatch
-            if not fnmatch.fnmatch(model or "", ml.replace("%", "*")):
-                continue
-        if (model or "") in (p.get("exclude_models") or []):
+        if ml and not fnmatch.fnmatchcase(model.lower(), str(ml).replace("%", "*").lower()):
+            continue
+        if model in (p.get("exclude_models") or []):   # SQL <> is case-sensitive
             continue
         return True
     return False
@@ -329,9 +359,8 @@ def yaml_get(path: str, default: str = "") -> str:
     Enough for flat provider keys (stt.provider, auxiliary.vision.model); the
     system python has no PyYAML and generators must stay stdlib-only.
     """
-    try:
-        lines = (home() / "config.yaml").read_text(encoding="utf-8").splitlines()
-    except OSError:
+    lines = read_text_safe(home() / "config.yaml").splitlines()
+    if not lines:
         return default
     keys = path.split(".")
     depth = 0
@@ -362,7 +391,7 @@ def env_key_names() -> set[str]:
     say "key X is configured" on the providers card."""
     names: set[str] = set()
     try:
-        for line in (home() / ".env").read_text(encoding="utf-8").splitlines():
+        for line in read_text_safe(home() / ".env").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -375,7 +404,7 @@ def env_key_names() -> set[str]:
 def read_json(path: Path):
     try:
         import json
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(read_text_safe(path, "null"))
     except (OSError, ValueError):
         return None
 

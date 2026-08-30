@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.6.0 — 2026-08-30
+
+A second sweep, over classes the first one did not cover. Four found, each with a
+test that fails on v0.5.1 — and two of them were defects in the containment work
+of v0.4.0 itself.
+
+* **A bad byte stopped everything.** `UnicodeDecodeError` is a `ValueError`, so
+  every `except OSError` around a `read_text(encoding="utf-8")` let it through.
+  The files this reads are written by the agent, and a killed writer leaves a
+  truncated multibyte sequence — one such byte in `memories/MEMORY.md` produced a
+  build with **zero pages**, and a traceback in a log nobody reads. Agent-written
+  files now go through `read_text_safe()`, which decodes leniently: a replacement
+  character in one label beats a dashboard frozen on yesterday.
+* **The build lock leaked on failure.** `_BuildLock` was a context manager driven
+  by hand-written `__enter__`/`__exit__`, so any exception left the lock file
+  behind and blocked every build for the next fifteen minutes. It is a `with`
+  block now.
+* **Containment covered five call sites out of thirty.** The v0.4.0 promise that a
+  failing section costs only itself was true for `events`, `security`, `usage`,
+  `cron` and `connectors` — and false for the KPI queries, the memory probe, the
+  history CSV, the routing banner, every host probe and all four view builders.
+  All of them are contained now; a failing probe renders as `—`.
+* **The Python and SQL twins disagreed, but only on Linux.** `is_paid_row()` is the
+  single-row twin of the `paid()` SQL. SQLite `LIKE` folds ASCII case; Python's
+  `fnmatch` folds case only where the filesystem does — so the two agreed on the
+  developer's Windows machine and disagreed on the Linux server, where a model
+  name like `Gemini-3.0` would be paid in the cost card and unpaid in the routing
+  banner, on the same page. The Python side now matches SQL semantics explicitly.
+* Also: `validate()` covered two numeric settings out of nine; the other seven
+  (subscription price, weekly budget, reference tariffs, cost freshness, memory
+  limits) are checked now, and `Config.number()` makes the read path fall back
+  instead of raising.
+
+Tests: 48 → 54.
+
+
 ## v0.5.1 — 2026-08-30
 
 A sweep prompted by the two outside PRs: both had found a place where an earlier

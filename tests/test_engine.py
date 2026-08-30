@@ -420,6 +420,75 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(ac._error_message(err(b"<html>oops</html>")), "(unparseable error body)")
         self.assertEqual(ac._error_message(err(b'{"error":{}}')), "(no message in the error body)")
 
+    # ── second sweep: classes not covered by the first ─────────────────────
+
+    def test_read_text_safe_never_raises_on_content(self):
+        d = Path(tempfile.mkdtemp(prefix="hd-dec-"))
+        bad = d / "bad.md"
+        bad.write_bytes(b"a\xff\xfeb")
+        self.assertIn("a", common.read_text_safe(bad))
+        self.assertEqual(common.read_text_safe(d / "missing.md", "dflt"), "dflt")
+
+    def test_a_failing_probe_costs_only_its_own_value(self):
+        """_safe() was applied to five call sites; the rest could kill the build."""
+        import inspect
+        from hermes_dashboard import build as bld
+        src = inspect.getsource(bld._build_pages)
+        for step in ("collect_kpis", "memory_facts", "gen_banner.build", "gen_banner.state",
+                     "sysinfo.git_head", "view_overview", "history.update_and_deltas"):
+            idx = src.find(step)
+            self.assertGreater(idx, 0, f"{step} no longer runs in _build_pages")
+            window = src[max(0, idx - 200):idx]
+            self.assertIn("_safe(", window, f"{step} is not contained by _safe()")
+
+    def test_the_build_lock_is_released_when_a_build_raises(self):
+        """__enter__/__exit__ called by hand leaked the lock on any exception."""
+        import inspect
+        from hermes_dashboard import build as bld
+        src = inspect.getsource(bld.build_all)
+        self.assertIn("with _BuildLock(", src)
+        self.assertNotIn(".__enter__()", src, "the lock must be held by `with`, not by hand")
+        self.assertNotIn(".__exit__(", inspect.getsource(bld._build_pages))
+
+    def test_python_and_sql_agree_on_what_is_paid(self):
+        """fnmatch folds case only where the filesystem does; SQL LIKE always does.
+
+        The twins therefore agreed on Windows and disagreed on Linux — the
+        routing banner and the cost card would contradict each other.
+        """
+        cfg = config.Config({"providers": {"paid": [
+            {"id": "gemini", "model_like": "gemini-%", "exclude_models": ["gemini-2.5-flash"]},
+            {"id": "anthropic"}]}})
+        config.set_current(cfg)
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE sessions(billing_provider TEXT, model TEXT)")
+        rows = [(p, m) for p in ("gemini", "anthropic", "openai-codex", "")
+                for m in ("gemini-3.0-pro", "GEMINI-3.0", "Gemini-3.0", "gemini-2.5-flash",
+                          "claude-x", "gpt-5.5", "")]
+        db.executemany("INSERT INTO sessions VALUES (?,?)", rows)
+        in_sql = {(r[0], r[1]) for r in
+                  db.execute("SELECT billing_provider, model FROM sessions WHERE " + common.paid())}
+        for prov, model in rows:
+            self.assertEqual(common.is_paid_row(prov, model), (prov, model) in in_sql,
+                             f"twins disagree on {prov!r}/{model!r}")
+
+    def test_every_numeric_setting_is_validated_and_degrades(self):
+        bad = config.Config({"providers": {"primary": {"subscription_usd_month": "20$",
+                                                       "weekly_input_budget": "lots",
+                                                       "ref_in_per_m": "x", "ref_out_per_m": "y"},
+                                           "cost_fresh_days": "six"},
+                             "memory": {"memory_char_limit_default": "many",
+                                        "user_char_limit_default": "some"}})
+        errs = bad.validate()
+        for key in ("subscription_usd_month", "weekly_input_budget", "ref_in_per_m",
+                    "ref_out_per_m", "cost_fresh_days", "memory_char_limit_default",
+                    "user_char_limit_default"):
+            self.assertTrue(any(key in e for e in errs), f"{key} is not validated")
+        # and the read path falls back rather than raising
+        self.assertEqual(bad.number("providers.cost_fresh_days", 6, int), 6)
+        self.assertEqual(bad.number("providers.primary.subscription_usd_month", 0.0), 0.0)
+        self.assertEqual(config.Config({}).number("providers.cost_fresh_days", 6, int), 6)
+
     # ── sweep: instances of classes that were fixed in one place only ──────
 
     def test_no_module_left_with_a_shared_temp_name(self):
@@ -658,6 +727,19 @@ class BuildTests(unittest.TestCase):
         from hermes_dashboard import config as cfgmod, render
         self.assertEqual(render.favicon_link(cfgmod.Config({"agent": {"favicon": ""}})), "")
         self.assertEqual(render.favicon_link(cfgmod.Config({"agent": {"favicon": "no/such.ico"}})), "")
+
+    def test_a_bad_byte_in_an_agent_file_does_not_stop_the_build(self):
+        """UnicodeDecodeError is a ValueError, so `except OSError` let it through.
+
+        A killed writer leaves a truncated multibyte sequence in exactly the
+        files the dashboard reads. Before this, one such byte in MEMORY.md
+        produced zero pages.
+        """
+        home = make_home()
+        (home / "memories" / "MEMORY.md").write_bytes(b"rule\n\xd0\xa1\xd1 truncated\n")
+        pages = self._build(home)
+        self.assertIn("index.html", pages)
+        self.assertTrue(len(pages["index.html"]) > 1000)
 
     def test_synthetic_db(self):
         home = make_home()

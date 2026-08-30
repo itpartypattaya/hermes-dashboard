@@ -287,7 +287,7 @@ def build() -> tuple[str, str]:
         return "", ""
     prim = cfg.get("providers.primary", {})
     pid = primary_id(cfg)
-    fresh_days = int(cfg.get("providers.cost_fresh_days", 6))
+    fresh_days = cfg.number("providers.cost_fresh_days", 6, int)
     with db:
         # active(): a session with no model call is not usage — README's first
         # honesty rule — and would otherwise inflate the session count here.

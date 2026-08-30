@@ -20,7 +20,7 @@ from pathlib import Path
 from . import (gen_banner, gen_connectors, gen_cron, gen_events, gen_security, gen_usage,
                history, render, sysinfo)
 from .common import (active, atomic_write, deliberate_paid, esc, fallback, fmt_tok, home,
-                     paid, scalar, yaml_get)
+                     paid, read_text_safe, scalar, yaml_get)
 from .config import Config, child_environment, load_budgets_env, load_config, set_current
 from .i18n import _, set_lang
 
@@ -82,12 +82,14 @@ def run_collectors(cfg: Config) -> None:
             print(f"[collector] {cmd[-1]}: not run ({e})", file=sys.stderr)
 
 
+# Shape of memory_facts(); used when the probe fails so the view still renders.
+MEMORY_UNKNOWN = {"MEMCH": 0, "USERCH": 0, "MEMLIM": 0, "USERLIM": 0, "MEMENT": 0,
+                  "MEMPCT": None, "USERPCT": None}
+
+
 def memory_facts(cfg: Config) -> dict:
     def chars(rel: str) -> int:
-        try:
-            return len((home() / rel).read_text(encoding="utf-8"))
-        except OSError:
-            return 0
+        return len(read_text_safe(home() / rel))
 
     def limit(key: str, dflt: int) -> int:
         try:
@@ -97,12 +99,9 @@ def memory_facts(cfg: Config) -> dict:
 
     memch = chars(cfg.get("memory.memory_file", "memories/MEMORY.md"))
     userch = chars(cfg.get("memory.user_file", "memories/USER.md"))
-    memlim = limit("memory_char_limit", int(cfg.get("memory.memory_char_limit_default", 2600)))
-    userlim = limit("user_char_limit", int(cfg.get("memory.user_char_limit_default", 1700)))
-    try:
-        ment = (home() / cfg.get("memory.memory_file", "memories/MEMORY.md")).read_text(encoding="utf-8").count("§")
-    except OSError:
-        ment = 0
+    memlim = limit("memory_char_limit", cfg.number("memory.memory_char_limit_default", 2600, int))
+    userlim = limit("user_char_limit", cfg.number("memory.user_char_limit_default", 1700, int))
+    ment = read_text_safe(home() / cfg.get("memory.memory_file", "memories/MEMORY.md")).count("§")
     return {"MEMCH": memch, "USERCH": userch, "MEMLIM": memlim, "USERLIM": userlim, "MEMENT": ment,
             # no declared limit → no percentage; a made-up denominator would be a lie
             "MEMPCT": memch * 100 // memlim if memlim else None,
@@ -309,7 +308,7 @@ def config_map_html(cfg: Config, lang: str) -> str:
     if not html:
         cache = home() / "cache" / f"config-map.{lang}.html"
         if cache.is_file():
-            html = cache.read_text(encoding="utf-8")
+            html = read_text_safe(cache)
             stale = f'<div class="cfempty">⚠️ {_("The config map was not rebuilt on this run — the self-check failed, the last good version is shown. See the dashboard log.")}</div>'
     if not html:
         html = (f'<div class="vh"><div class="kick">{_("Configuration")}</div><h1>{_("Config")}</h1>'
@@ -339,23 +338,30 @@ def build_all(cfg: Config, only_lang: str | None = None, out_dir: Path | None = 
     set_current(cfg)
     out_dir = out_dir or cfg.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    lock = _BuildLock(out_dir).__enter__()
-    if not lock.held:
-        return []
+    # `with`, not manual __enter__/__exit__: a build that raises used to leave the
+    # lock file behind and block every build for the next fifteen minutes.
+    with _BuildLock(out_dir) as lock:
+        if not lock.held:
+            return []
+        return _build_pages(cfg, only_lang, out_dir)
+
+
+def _build_pages(cfg: Config, only_lang: str | None, out_dir: Path) -> list[Path]:
     load_budgets_env(cfg)   # HERMES_DASHBOARD_QUOTA_ALERT_PCT etc. reach the collectors without a wrapper
-    run_collectors(cfg)
-    k = collect_kpis(cfg)
-    m = memory_facts(cfg)
-    deltas = history.update_and_deltas({
+    _safe("collectors", lambda: run_collectors(cfg))
+    k = _safe("kpis", lambda: collect_kpis(cfg), {})
+    m = _safe("memory", lambda: memory_facts(cfg), MEMORY_UNKNOWN)
+    deltas = _safe("history", lambda: history.update_and_deltas({
         "facts": k.get("FACTS"), "input7d": k.get("TOK7_IN"),
         "fallback7": k.get("FALLBACK7"), "sess7": k.get("SESS7"),
-    })
-    chain = gen_banner.state()
-    gw = sysinfo.gateway_state()
-    sha, commit = sysinfo.git_head()
-    disk, diskp = sysinfo.disk()
-    every = sysinfo.cron_every_minutes("hermes-dashboard") or sysinfo.cron_every_minutes("dashboard-gen")
-    skills = gen_connectors.our_skill_names()
+    }), {})
+    chain = _safe("chain", gen_banner.state, {})
+    gw = _safe("gateway", sysinfo.gateway_state, "")
+    sha, commit = _safe("git", sysinfo.git_head, ("—", "—"))
+    disk, diskp = _safe("disk", sysinfo.disk, ("—", 0))
+    every = _safe("cron-freq", lambda: sysinfo.cron_every_minutes("hermes-dashboard")
+                  or sysinfo.cron_every_minutes("dashboard-gen"), 0)
+    skills = _safe("skills", gen_connectors.our_skill_names, [])
     written: list[Path] = []
     for lang in cfg.languages:
         if only_lang and lang != only_lang:
@@ -364,9 +370,14 @@ def build_all(cfg: Config, only_lang: str | None = None, out_dir: Path | None = 
         host = {
             "dot": "var(--ok)" if gw == "active" else "var(--no)",
             "gwt": _("running") if gw == "active" else gw,
-            "up": sysinfo.uptime_text(), "load": sysinfo.loadavg(), "cores": sysinfo.cores(),
-            "disk": disk, "diskp": diskp, "ram": sysinfo.ram(), "now": sysinfo.now_label(),
-            "sync": sysinfo.last_sync(), "sync_at": sysinfo.cron_hhmm("autosync"),
+            "up": _safe("uptime", sysinfo.uptime_text, "—"),
+            "load": _safe("load", sysinfo.loadavg, "—"),
+            "cores": _safe("cores", sysinfo.cores, 0),
+            "disk": disk, "diskp": diskp,
+            "ram": _safe("ram", sysinfo.ram, "—"),
+            "now": _safe("now", sysinfo.now_label, "—"),
+            "sync": _safe("sync", sysinfo.last_sync, "—"),
+            "sync_at": _safe("sync-at", lambda: sysinfo.cron_hhmm("autosync"), ""),
             "sha": sha, "commit": commit,
             "freq": _("every {n} min").format(n=every) if every else _("on schedule"),
             "skilln": len(skills), "chain": chain,
@@ -377,12 +388,13 @@ def build_all(cfg: Config, only_lang: str | None = None, out_dir: Path | None = 
         title = f'{cfg.get("agent.name")} — {_("system dashboard")}'
         page = (render.head(cfg, title, lang)
                 + render.rail(cfg, lang, "over", host["dot"], host["gwt"], host["sync"], sha, commit)
-                + '<main class="work"><div class="pad">' + gen_banner.build()
-                + view_overview(cfg, k, deltas, host, lang)
-                + view_cost(cfg, usage, analytics)
-                + view_memory(cfg, k, m, deltas, host)
-                + view_cron(cfg, _safe("cron", gen_cron.build), host)
-                + (config_map_html(cfg, lang) if cfg.get("views.config_map", True) else "")
+                + '<main class="work"><div class="pad">' + _safe("banner", gen_banner.build)
+                + _safe("overview", lambda: view_overview(cfg, k, deltas, host, lang))
+                + _safe("cost", lambda: view_cost(cfg, usage, analytics))
+                + _safe("memory-view", lambda: view_memory(cfg, k, m, deltas, host))
+                + _safe("cron", lambda: view_cron(cfg, _safe("cron-chart", gen_cron.build), host))
+                + (_safe("config-map", lambda: config_map_html(cfg, lang))
+                   if cfg.get("views.config_map", True) else "")
                 + f'<footer><span>{_("Private dashboard")} · {_("generated")} {esc(host["now"])}</span>'
                 + f'<span>{esc(cfg.get("agent.config_repo_label", "")) or "hermes-dashboard"}</span></footer>'
                 + '</div></main>' + render.bottom_tabs(cfg, lang, "over") + render.script() + '</body></html>')
@@ -395,7 +407,6 @@ def build_all(cfg: Config, only_lang: str | None = None, out_dir: Path | None = 
             if chtml:
                 _atomic_write(ctarget, chtml)
                 written.append(ctarget)
-    lock.__exit__(None, None, None)
     return written
 
 

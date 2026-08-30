@@ -33,7 +33,7 @@ def _load() -> list[dict]:
         return []
     rows: list[dict] = []
     try:
-        with _hist_path().open(encoding="utf-8") as fh:
+        with _hist_path().open(encoding="utf-8", errors="replace") as fh:
             first = fh.readline()
             fh.seek(0)
             if first.startswith("date,"):
