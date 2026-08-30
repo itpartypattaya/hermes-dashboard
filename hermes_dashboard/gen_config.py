@@ -23,6 +23,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import sys
 
 from .config import current
@@ -659,8 +660,11 @@ def main() -> None:
 
     try:
         os.makedirs(os.path.dirname(cache_path()), exist_ok=True)
-        tmp = cache_path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
+        # Unique temp name: two builds racing (cron plus a manual rebuild) would
+        # otherwise share `<cache>.tmp` and one would publish the other's bytes.
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_path()),
+                                   prefix="." + os.path.basename(cache_path()) + ".", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(page)
         os.replace(tmp, cache_path())  # atomic: a half-written file never goes out
     except Exception as e:  # noqa: BLE001 — the cache is optional, the page is still returned

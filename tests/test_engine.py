@@ -420,6 +420,62 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(ac._error_message(err(b"<html>oops</html>")), "(unparseable error body)")
         self.assertEqual(ac._error_message(err(b'{"error":{}}')), "(no message in the error body)")
 
+    # ── sweep: instances of classes that were fixed in one place only ──────
+
+    def test_no_module_left_with_a_shared_temp_name(self):
+        """The unique-temp fix has to hold for every writer, not the last one found."""
+        import inspect
+        from hermes_dashboard import build, gen_config, history, settings as st
+        from hermes_dashboard.collectors import anthropic_cost, codex_quota
+        for mod in (build, st, history, gen_config, anthropic_cost, codex_quota):
+            src = inspect.getsource(mod)
+            for pattern in ('with_suffix(".tmp")', 'cache_path() + ".tmp"'):
+                self.assertNotIn(pattern, src,
+                                 f"{mod.__name__} derives its temp name from the target")
+
+    def test_every_sql_literal_from_config_is_quoted(self):
+        """paid()/free_cond() quote; the primary card used to build its own."""
+        import inspect
+        from hermes_dashboard import gen_usage
+        cfg = config.Config({"providers": {"primary": {"id": "o'brien"}}})
+        config.set_current(cfg)
+        self.assertEqual(common.sql_str(common.primary_id()), "'o''brien'")
+        self.assertNotIn("billing_provider='{pid}'", inspect.getsource(gen_usage))
+
+    def test_timezone_survives_a_hand_edited_config(self):
+        """validate() guards the form; the build reads a file people edit by hand."""
+        for bad in (24, -24, "x", None, 99999):
+            config.set_current(config.Config({"timezone": {"offset_hours": bad}}))
+            self.assertEqual(common.tz().utcoffset(None).total_seconds(), 0,
+                             f"offset_hours={bad!r} must fall back to UTC, not crash")
+        config.set_current(config.Config({"timezone": {"offset_hours": 7}}))
+        self.assertEqual(common.tz().utcoffset(None).total_seconds(), 7 * 3600)
+
+    def test_per_job_telemetry_ignores_sessions_with_no_model_call(self):
+        import inspect
+        from hermes_dashboard import gen_cron
+        src = inspect.getsource(gen_cron)
+        self.assertIn("coalesce(api_call_count,0) > 0", src,
+                      "the per-job token table must apply the same activity rule")
+        self.assertNotIn('coalesce(api_call_count,0)>0 "', src,
+                         "the activity predicate must come from active(), not a hand-typed copy")
+
+    def test_language_codes_are_safe_as_filenames_and_js_keys(self):
+        from hermes_dashboard import render
+        # the old check was length-only, so these passed
+        for bad in ('a"b', "../x", "a/b", "e n"):
+            errs = config.Config({"i18n": {"languages": [bad]}}).validate()
+            self.assertTrue(any("i18n.languages" in e for e in errs), f"{bad!r} must be rejected")
+        self.assertEqual(config.Config({"i18n": {"default": "en",
+                                                 "languages": ["en", "pt-BR"]}}).validate(), [])
+        # and the redirect map is escaped regardless
+        cfg = config.Config({"i18n": {"default": "en", "languages": ["en", 'a"b']}})
+        config.set_current(cfg)
+        head = render.head(cfg, "t", "en")
+        js = head[head.find("pg={"):head.find("};if(hl")]
+        self.assertNotIn('"a"b"', js, "an unescaped key breaks the whole script block")
+        self.assertIn('a\\"b', js)
+
     def test_cost_api_asks_for_a_legal_page_size(self):
         """Daily buckets cap at 31; limit=32 is a 400 that used to be swallowed."""
         from hermes_dashboard.collectors import anthropic_cost as ac

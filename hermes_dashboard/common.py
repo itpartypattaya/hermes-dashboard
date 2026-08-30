@@ -82,7 +82,21 @@ def cache_dir() -> Path:
 
 
 def tz() -> timezone:
-    return timezone(timedelta(hours=int(current().get("timezone.offset_hours", 0))))
+    """The configured UTC offset, or UTC if it is unusable.
+
+    validate() rejects a bad offset when the form saves it, but dashboard.json
+    is a file the README tells people to edit by hand, so the read path has to
+    survive what the write path never let through. datetime rejects |offset|
+    >= 24h; anything non-numeric never reaches datetime at all.
+    """
+    raw = current().get("timezone.offset_hours", 0)
+    try:
+        hours = int(raw)
+    except (TypeError, ValueError):
+        hours = 0
+    if not -23 <= hours <= 23:
+        hours = 0
+    return timezone(timedelta(hours=hours))
 
 
 def tz_label() -> str:
@@ -93,6 +107,11 @@ def tz_label() -> str:
 
 def _q(s: str) -> str:
     return "'" + str(s).replace("'", "''") + "'"
+
+
+# Public name for the same thing: every SQL literal built from config goes
+# through it, so no caller has to remember to double an apostrophe.
+sql_str = _q
 
 
 def active() -> str:

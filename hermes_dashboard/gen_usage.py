@@ -19,7 +19,7 @@ from . import gen_chats
 from .common import (
     active, connect_ro, esc, eff_bar, fmt_tok, fmt_usd, free_cond, home,
     metrics, num, primary_id, provider_cond, read_json, remain_color, sec,
-    simple_bar, ubar, yaml_get,
+    simple_bar, sql_str, ubar, yaml_get,
 )
 from .config import current
 from .i18n import _, date_fmt
@@ -291,8 +291,12 @@ def build() -> tuple[str, str]:
     with db:
         # active(): a session with no model call is not usage — README's first
         # honesty rule — and would otherwise inflate the session count here.
-        cx7 = agg_where(db, 7, f"billing_provider='{pid}' AND " + active())
-        cx30 = agg_where(db, 30, f"billing_provider='{pid}' AND " + active())
+        # sql_str(): the id is a config value like any other — paid()/free_cond()
+        # quote theirs, and hand-rolling this one is how a stray apostrophe turns
+        # into broken SQL and a missing section.
+        prim_cond = "billing_provider=" + sql_str(pid) + " AND " + active()
+        cx7 = agg_where(db, 7, prim_cond)
+        cx30 = agg_where(db, 30, prim_cond)
         cx_src = source_breakdown(db, 30, pid)
         paid_data = []
         for p in cfg.get("providers.paid", []):

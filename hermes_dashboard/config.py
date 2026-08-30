@@ -151,6 +151,7 @@ def _deep_merge(base: dict, over: dict) -> dict:
 
 
 _ENV_LINE_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
+_LANG_RE = re.compile(r"^[A-Za-z0-9_-]{1,8}$")
 
 
 # Names that look like somebody's credentials. The dashboard's own children
@@ -300,8 +301,13 @@ class Config:
                 except re.error as e:
                     errs.append(f"{key} is not a valid regular expression ({e})")
         for lang in self.raw["i18n"].get("languages") or []:
-            if not isinstance(lang, str) or len(lang) > 5:
-                errs.append(f"i18n.languages: bad entry {lang!r}")
+            # A language code becomes part of a filename (index.<lang>.html) and
+            # part of a JS object key, so restrict the charset rather than the
+            # length: the old length-only check let "../x" and 'a"b' through and
+            # only stopped a path traversal by accident.
+            if not isinstance(lang, str) or not _LANG_RE.match(lang):
+                errs.append(f"i18n.languages: bad entry {lang!r} "
+                            "(letters, digits, - and _ only, up to 8 characters)")
         return errs
 
 

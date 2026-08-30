@@ -12,7 +12,7 @@ import re
 import sqlite3
 import subprocess
 
-from .common import db_path, esc, fmt_tok, jobs_path, paid, primary_id, sec
+from .common import active, db_path, esc, fmt_tok, jobs_path, paid, primary_id, sec
 from .config import current
 from .i18n import _, lang
 
@@ -193,7 +193,7 @@ def cron_db_stats() -> tuple[int, int]:
     try:
         with sqlite3.connect(f"file:{db_path()}?mode=ro", uri=True) as db:
             row = db.execute("SELECT count(*), coalesce(sum(input_tokens),0) FROM sessions "
-                             "WHERE source='cron' AND coalesce(api_call_count,0)>0 "
+                             "WHERE source='cron' AND " + active() + " "
                              "AND started_at >= strftime('%s','now','-7 days')").fetchone()
             return int(row[0]), int(row[1])
     except sqlite3.Error:
@@ -246,6 +246,9 @@ JOB_SQL = """
            sum(CASE WHEN {paid} THEN 1 ELSE 0 END) paid
     FROM sessions
     WHERE source='cron' AND id LIKE 'cron\\_%' ESCAPE '\\'
+      -- a cron session that never called the model spent nothing: counting it
+      -- here inflates «sess» and can mark an unbilled row as paid
+      AND coalesce(api_call_count,0) > 0
       AND started_at >= strftime('%s','now',?)
     GROUP BY job
 """

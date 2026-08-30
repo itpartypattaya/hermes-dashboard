@@ -132,7 +132,9 @@ def head(cfg: Config, title: str, lang: str, base: str = "index") -> str:
     redirect = ""
     if len(langs) > 1 and base != "settings":
         # first load of the default page: honour a remembered language
-        pages = ",".join(f'"{l}":"{page_name(l, cfg, base)}"' for l in langs)
+        # Escaped for the same reason as cur= on the next line: a language code
+        # is config data, and config data in a JS literal is still a literal.
+        pages = ",".join('"' + jss(l) + '":"' + jss(page_name(l, cfg, base)) + '"' for l in langs)
         redirect = ('<script>try{var hl=localStorage.getItem("' + LANG_KEY + '"),cur="' + jss(lang) + '",'
                     'pg={' + pages + '};if(hl&&hl!==cur&&pg[hl]&&!location.hash.match(/nolang/)){'
                     'location.replace(pg[hl]+location.hash)}}catch(e){}</script>')
