@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.6.1 — 2026-08-31
+
+A third sweep. Three findings, all of the same shape as the earlier ones: one
+concept with two implementations that quietly disagree.
+
+* **Two answers to "which day".** The daily chart bucketed sessions with SQLite's
+  `localtime`, which is the *machine's* timezone, while every timestamp on the
+  page is formatted through `timezone.offset_hours`. On a VPS running UTC — the
+  default image almost everywhere — with an owner in UTC+7, every session before
+  07:00 landed in the previous day on the chart while the event feed showed the
+  right one. Reproduced on the reference server by forcing `TZ=UTC`; it agrees
+  there only because that machine happens to be set to the configured zone.
+  The SQL now offsets by the configured amount and `localtime` is gone.
+* **The third twin.** `paid_label()` matched on provider id alone, while
+  `paid()` and `is_paid_row()` — its two counterparts — also match on the model.
+  One provider id can carry both a paid slot and a free key, so a free session
+  got the paid provider's label. Latent rather than live: both call sites are
+  already filtered to paid rows, but the function's own signature invites the
+  mistake.
+* **Zero rendered as nothing.** `esc()` was `str(s or "")`, so `0`, `0.0` and
+  `False` came out blank — a bar or tile whose value is legitimately zero showed
+  an empty space. That is exactly the absent-versus-zero confusion this dashboard
+  refuses to make everywhere else in its rules. Only `None` is empty now.
+
+Tests: 54 → 57.
+
+
 ## v0.6.0 — 2026-08-30
 
 A second sweep, over classes the first one did not cover. Four found, each with a
