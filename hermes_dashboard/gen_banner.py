@@ -14,15 +14,14 @@ import sqlite3
 import time
 from datetime import datetime
 
-from .common import active, connect_ro, esc, home, is_paid_row, paid, paid_label, primary_id, tz
+from .common import (active, connect_ro, esc, home, is_paid_row, paid, paid_label, primary_id,
+                     src_in, tz)
 from .config import current
 from .i18n import _
 
 
 def _src_in() -> str:
-    srcs = current().get("providers.fallback_sources", []) or []
-    cond = "source IN (" + ",".join("'" + s.replace("'", "''") + "'" for s in srcs) + ")" if srcs else "1"
-    return cond + " AND " + active()
+    return src_in() + " AND " + active()
 
 
 def primary_cooldown() -> str | None:

@@ -82,6 +82,14 @@ def _admin_key() -> str:
 # silently stays on an old CSV. Hence: legal page size + follow next_page.
 MAX_DAILY_BUCKETS = 31
 
+# Where an uploaded export lands. The settings page writes
+# "<provider id>_cost_export.csv", so the pattern has to cover any id — it used
+# to list "anthropic_*" and "claude_api_cost*" only, which meant an upload for a
+# provider named anything else was written, reported as saved, and then never
+# read: the card stayed on the estimate with nothing saying why.
+CSV_SUFFIX = "cost_export.csv"
+CSV_GLOBS = ("*" + CSV_SUFFIX, "claude_api_cost*.csv", "anthropic_cost*.csv")
+
 
 def _error_message(e) -> str:
     """The provider's own error text, without echoing the raw body.
@@ -163,7 +171,7 @@ def _csv_source() -> Path | None:
     if not cache_dir.is_dir():
         return None
     seen: dict[Path, float] = {}
-    for pat in ("anthropic_cost_export.csv", "claude_api_cost*.csv", "anthropic_cost*.csv"):
+    for pat in CSV_GLOBS:
         for f in cache_dir.glob(pat):
             if f.name == CACHE.name:  # skip our own JSON cache
                 continue

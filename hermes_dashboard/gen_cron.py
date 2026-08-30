@@ -12,7 +12,7 @@ import re
 import sqlite3
 import subprocess
 
-from .common import active, db_path, esc, fmt_tok, jobs_path, paid, primary_id, sec
+from .common import active, db_path, esc, fmt_tok, is_free_row, jobs_path, paid, primary_id, sec
 from .config import current
 from .i18n import _, lang
 
@@ -318,14 +318,13 @@ def billing_card() -> str:
     except (OSError, ValueError):
         return ""
     enabled = [j for j in raw if j.get("enabled", True)]
-    free = {(f.get("id"), f.get("model")) for f in cfg.get("providers.free", [])}
     pid = primary_id(cfg)
     groups = {"primary": [], "free": [], "script": [], "paid": []}
     for j in enabled:
         prov, mod = j.get("provider"), j.get("model")
         if j.get("no_agent"):
             key = "script"
-        elif (prov, mod) in free or (prov, None) in free:
+        elif is_free_row(prov or "", mod or "", cfg):
             key = "free"
         elif prov in (None, "", pid):
             key = "primary"

@@ -151,7 +151,11 @@ def _deep_merge(base: dict, over: dict) -> dict:
 
 
 _ENV_LINE_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
-_LANG_RE = re.compile(r"^[A-Za-z0-9_-]{1,8}$")
+# A language code is a filename component, a JS object key and a cookie value;
+# one definition of what it may contain, shared by everything that parses one.
+_LOCALES = Path(__file__).parent / "locales"
+LANG_CHARS = r"[A-Za-z0-9_-]{1,8}"
+_LANG_RE = re.compile("^" + LANG_CHARS + "$")
 
 
 # Names that look like somebody's credentials. The dashboard's own children
@@ -334,6 +338,11 @@ class Config:
             if not isinstance(lang, str) or not _LANG_RE.match(lang):
                 errs.append(f"i18n.languages: bad entry {lang!r} "
                             "(letters, digits, - and _ only, up to 8 characters)")
+            elif lang != "en" and not (_LOCALES / f"{lang}.json").is_file():
+                # Otherwise the build cheerfully writes index.<lang>.html full of
+                # English and labels it <html lang="de"> — the switcher offers a
+                # translation that does not exist.
+                errs.append(f"i18n.languages: {lang!r} has no locales/{lang}.json")
         return errs
 
 

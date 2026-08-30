@@ -18,7 +18,8 @@ from datetime import date, datetime, timedelta
 from . import gen_chats
 from .common import (
     active, connect_ro, esc, eff_bar, fmt_tok, fmt_usd, free_cond, home,
-    local_day, metrics, num, primary_id, provider_cond, read_json, remain_color, sec,
+    forced_fallback_of, local_day, metrics, num, primary_id, provider_cond, read_json,
+    remain_color, sec,
     simple_bar, sql_str, ubar, yaml_get,
 )
 from .config import current
@@ -303,9 +304,8 @@ def build() -> tuple[str, str]:
             if not p.get("id"):
                 continue
             c = provider_cond(p)
-            fb = "(" + c + " AND source IN (" + ",".join(f"'{s}'" for s in cfg.get("providers.fallback_sources", [])) + "))" \
-                if cfg.get("providers.fallback_sources") else c
-            paid_data.append((p, agg_where(db, 7, c), agg_where(db, 30, c), agg_where(db, 30, fb)))
+            paid_data.append((p, agg_where(db, 7, c), agg_where(db, 30, c),
+                              agg_where(db, 30, forced_fallback_of(c, cfg))))
         free30 = agg_where(db, 30, free_cond(cfg))
         oauth = [(g.get("label", "?"), tool_count(db, 30, g.get("like", "%"), g.get("not_like")))
                  for g in cfg.get("usage.oauth_groups", [])]

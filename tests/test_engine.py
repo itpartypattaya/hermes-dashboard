@@ -420,6 +420,89 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(ac._error_message(err(b"<html>oops</html>")), "(unparseable error body)")
         self.assertEqual(ac._error_message(err(b'{"error":{}}')), "(no message in the error body)")
 
+    # ── fourth sweep: one concept, one implementation ──────────────────────
+
+    def test_an_uploaded_export_is_found_whatever_the_provider_is_called(self):
+        """The write side and the read side must share one filename convention.
+
+        Settings wrote "<id>_cost_export.csv" while the collector globbed for
+        "anthropic_*" and "claude_api_cost*": for any other provider id the
+        upload was saved, reported as saved, and never read again.
+        """
+        import fnmatch
+        from hermes_dashboard.collectors.anthropic_cost import CSV_GLOBS, CSV_SUFFIX
+        from hermes_dashboard import settings as st
+        self.assertEqual(st.CSV_NAME, CSV_SUFFIX, "settings must not invent its own name")
+        for pid in ("anthropic", "claude", "openai", "vertex", "my-provider"):
+            written = pid + "_" + CSV_SUFFIX
+            self.assertTrue(any(fnmatch.fnmatch(written, g) for g in CSV_GLOBS),
+                            f"an upload for {pid!r} would never be read")
+
+    def test_a_language_without_a_locale_is_reported(self):
+        """Two sources for "what languages exist": the config list and the files.
+
+        Unreconciled, the build wrote index.de.html full of English and labelled
+        it <html lang="de">, with the switcher offering the translation.
+        """
+        errs = config.Config({"i18n": {"default": "en", "languages": ["en", "de"]}}).validate()
+        self.assertTrue(any("locales/de.json" in e for e in errs))
+        # en never has a file of its own, and a real locale must stay silent
+        self.assertEqual(config.Config({"i18n": {"default": "ru",
+                                                 "languages": ["ru", "en"]}}).validate(), [])
+
+    def test_the_per_provider_fallback_follows_the_shared_rule(self):
+        """gen_usage built this condition by hand and so missed two later fixes:
+        the activity rule (v0.4.0) and SQL quoting (v0.5.1)."""
+        cfg = config.Config({"providers": {
+            "paid": [{"id": "anthropic"}],
+            "fallback_sources": ["telegram", "o'clock"]}})
+        config.set_current(cfg)
+        cond = common.forced_fallback_of(common.provider_cond({"id": "anthropic"}), cfg)
+        self.assertIn(common.active(), cond, "a session with no model call is not a fallback")
+        self.assertIn("'o''clock'", cond, "source names must be quoted like every other literal")
+        # and it is really valid SQL
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE sessions(billing_provider TEXT, model TEXT, source TEXT,"
+                   " api_call_count INT)")
+        db.execute("INSERT INTO sessions VALUES ('anthropic','m','telegram',0)")
+        db.execute("INSERT INTO sessions VALUES ('anthropic','m','telegram',2)")
+        self.assertEqual(db.execute("SELECT count(*) FROM sessions WHERE " + cond).fetchone()[0], 1)
+
+    def test_free_is_decided_the_same_way_in_python_and_sql(self):
+        """A free entry with no `model` covers every model of that provider in
+        SQL; the cron billing tiers used an exact (id, model) pair instead."""
+        cfg = config.Config({"providers": {"free": [{"id": "gemini"}]}})
+        config.set_current(cfg)
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE s(billing_provider TEXT, model TEXT)")
+        rows = [("gemini", "gemini-2.5-flash"), ("gemini", "gemini-3.0"),
+                ("gemini", None), ("anthropic", "x")]
+        db.executemany("INSERT INTO s VALUES (?,?)", rows)
+        in_sql = {(r[0], r[1]) for r in
+                  db.execute("SELECT billing_provider, model FROM s WHERE " + common.free_cond())}
+        for prov, model in rows:
+            self.assertEqual(common.is_free_row(prov or "", model or "", cfg),
+                             (prov, model) in in_sql, f"twins disagree on {prov!r}/{model!r}")
+
+    def test_sql_string_quoting_has_one_implementation(self):
+        """gen_banner carried its own copy of _q(); gen_usage carried none."""
+        import inspect
+        from hermes_dashboard import gen_banner, gen_usage
+        for mod in (gen_banner, gen_usage):
+            src = inspect.getsource(mod)
+            self.assertNotIn('replace("\'", "\'\'")', src,
+                             f"{mod.__name__} re-implements SQL quoting")
+            self.assertNotIn("f\"'{s}'\"", src, f"{mod.__name__} interpolates a bare literal")
+        config.set_current(config.Config({"providers": {"fallback_sources": ["a'b"]}}))
+        self.assertIn("'a''b'", common.src_in())
+
+    def test_the_language_charset_is_defined_once(self):
+        import inspect
+        from hermes_dashboard import settings as st
+        self.assertNotIn("A-Za-z0-9_-", inspect.getsource(st),
+                         "settings must take the charset from config, not repeat it")
+        self.assertEqual(st.LANG_CHARS, config.LANG_CHARS)
+
     # ── third sweep ────────────────────────────────────────────────────────
 
     def test_one_definition_of_which_day(self):
@@ -577,8 +660,14 @@ class HardeningTests(unittest.TestCase):
         for bad in ('a"b', "../x", "a/b", "e n"):
             errs = config.Config({"i18n": {"languages": [bad]}}).validate()
             self.assertTrue(any("i18n.languages" in e for e in errs), f"{bad!r} must be rejected")
+        # a language the engine can actually translate
         self.assertEqual(config.Config({"i18n": {"default": "en",
-                                                 "languages": ["en", "pt-BR"]}}).validate(), [])
+                                                 "languages": ["en", "ru"]}}).validate(), [])
+        # ...and one it cannot: the build would write index.pt-BR.html full of English
+        self.assertTrue(any("locales/pt-BR.json" in e for e in
+                            config.Config({"i18n": {"default": "en",
+                                                    "languages": ["en", "pt-BR"]}}).validate()),
+                        "a listed language with no locale file must be reported")
         # and the redirect map is escaped regardless
         cfg = config.Config({"i18n": {"default": "en", "languages": ["en", 'a"b']}})
         config.set_current(cfg)

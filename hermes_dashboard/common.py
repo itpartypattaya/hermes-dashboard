@@ -199,6 +199,49 @@ def deliberate_paid(cfg: Config | None = None) -> str:
     return c + ")"
 
 
+def src_in(cfg: Config | None = None) -> str:
+    """`source IN (…)` over providers.fallback_sources — quoted once, here.
+
+    Three call sites used to spell this out, each with its own quoting: one
+    forgot to escape at all, one re-implemented _q() inline.
+    """
+    cfg = cfg or current()
+    srcs = cfg.get("providers.fallback_sources", []) or []
+    if not srcs:
+        return "1"
+    return "source IN (" + ",".join(_q(s) for s in srcs) + ")"
+
+
+def forced_fallback_of(cond: str, cfg: Config | None = None) -> str:
+    """Forced-fallback rows *within* an already-narrowed condition.
+
+    fallback() answers the same question for all paid providers at once; the
+    per-provider card needs it for one. Sharing this keeps the activity rule
+    and the quoting in one place — the hand-rolled version had neither.
+    """
+    cfg = cfg or current()
+    if not (cfg.get("providers.fallback_sources", []) or []):
+        return "(" + cond + " AND " + active() + ")"
+    return "(" + cond + " AND " + active() + " AND " + src_in(cfg) + ")"
+
+
+def is_free_row(prov: str, model: str = "", cfg: Config | None = None) -> bool:
+    """Python twin of free_cond(): an entry without `model` covers every model.
+
+    The cron billing tiers used a set of (id, model) pairs instead, so a free
+    provider declared without a model matched only a job whose model was
+    literally absent — and every real job landed in the paid tier.
+    """
+    cfg = cfg or current()
+    for f in cfg.get("providers.free", []):
+        if prov != f.get("id"):
+            continue
+        if f.get("model") and (model or "") != f.get("model"):
+            continue
+        return True
+    return False
+
+
 def primary_id(cfg: Config | None = None) -> str:
     return str((cfg or current()).get("providers.primary.id", ""))
 

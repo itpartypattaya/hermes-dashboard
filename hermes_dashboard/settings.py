@@ -41,12 +41,12 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from . import render
 from .common import atomic_write, esc, read_json
-from .config import Config, child_environment, load_config, set_current
+from .config import LANG_CHARS, Config, child_environment, load_config, set_current
 from .i18n import _, set_lang
 from .settings_schema import BUDGET_HELP, SCHEMA
 
 MAX_UPLOAD = 5 * 1024 * 1024
-CSV_NAME = "cost_export.csv"
+from .collectors.anthropic_cost import CSV_SUFFIX as CSV_NAME   # one convention, one place
 KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENV_LINE_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
 
@@ -774,7 +774,7 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(urlparse(self.path).query)
         cand = (q.get("lang") or [None])[0]
         if cand not in allowed:
-            m = re.search(r"hd-lang=([A-Za-z0-9_-]{1,8})", self.headers.get("Cookie") or "")
+            m = re.search("hd-lang=(" + LANG_CHARS + ")", self.headers.get("Cookie") or "")
             cand = m.group(1) if m else None
         return cand if cand in allowed else self.state.cfg.default_lang
 

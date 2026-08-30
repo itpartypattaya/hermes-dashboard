@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.7.0 — 2026-08-31
+
+The fourth sweep went straight at the pattern the third one named: a concept with
+more than one implementation. Six found; four of them were silently wrong on any
+installation configured differently from the reference one.
+
+* **An uploaded cost export could never be read.** The settings page writes
+  `<provider id>_cost_export.csv`; the collector globbed for `anthropic_*` and
+  `claude_api_cost*`. The two agreed only because the reference provider is called
+  `anthropic` — for `claude`, `openai` or any other id the file was written, the
+  page said it was saved, and the card stayed on the estimate forever. The
+  collector now owns the convention and the settings page imports it.
+* **A language with no locale was accepted.** `i18n.languages` and the files in
+  `locales/` are two answers to "what can this dashboard speak", never reconciled:
+  listing `de` produced `index.de.html` full of English, labelled `<html lang="de">`,
+  with the switcher offering it. `validate()` reports it now.
+* **The per-provider fallback was hand-rolled.** `gen_usage` built its own version
+  of the forced-fallback condition, so it missed both the activity rule added in
+  v0.4.0 (sessions that never called the model counted as incidents) and the SQL
+  quoting fixed in v0.5.1 (a source name with an apostrophe broke the query). It
+  calls the shared `forced_fallback_of()` now.
+* **Free was decided two ways.** In SQL a `providers.free` entry without a `model`
+  covers every model of that provider; the cron billing tiers compared exact
+  `(id, model)` pairs instead, so those jobs were filed under "Direct paid API".
+* Also: `gen_banner` carried a third hand-written copy of SQL string quoting, and
+  the character set of a language code was defined once in `config` and again in
+  the settings cookie parser. Both now have one definition.
+
+Tests: 57 → 63.
+
+
 ## v0.6.1 — 2026-08-31
 
 A third sweep. Three findings, all of the same shape as the earlier ones: one
