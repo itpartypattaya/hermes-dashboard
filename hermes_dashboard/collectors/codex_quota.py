@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -116,8 +117,10 @@ def _write_cache() -> int:
         # fail-open: do not overwrite the previous cache with a fresh failure
         return 0
     CACHE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CACHE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=CACHE.parent,
+                                     prefix=f".{CACHE.name}.", delete=False) as fh:
+        fh.write(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp = Path(fh.name)
     tmp.replace(CACHE)
     return 0
 

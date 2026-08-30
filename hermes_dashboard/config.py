@@ -152,6 +152,24 @@ def _deep_merge(base: dict, over: dict) -> dict:
 
 _ENV_LINE_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
 
+_CHILD_ENV_EXACT = {"HOME", "HERMES_HOME", "PATH", "LANG", "LC_ALL", "LC_CTYPE",
+                    "LC_MESSAGES", "TZ", "PYTHONPATH", "HERMES_DASHBOARD_LANG",
+                    "HERMES_DASHBOARD_CONFIG", "HERMES_DASHBOARD_TRUTH_REF",
+                    "HERMES_DASHBOARD_PROVIDER", "HERMES_DASHBOARD_TZ_OFFSET_H",
+                    "HERMES_DASHBOARD_QUOTA_ALERT_PCT"}
+_SECRET_ENV_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|OAUTH|SESSION|COOKIE|SSH|AWS|AZURE|GCP|GOOGLE_APPLICATION)", re.I)
+
+def child_environment(home: Path, *, extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Minimal non-secret environment for dashboard subprocesses."""
+    out = {k: v for k, v in os.environ.items()
+           if k in _CHILD_ENV_EXACT or (k.startswith("HERMES_DASHBOARD_") and not _SECRET_ENV_RE.search(k))}
+    out["HOME"] = "/opt/data"
+    out["HERMES_HOME"] = str(home)
+    for key, value in (extra or {}).items():
+        if not _SECRET_ENV_RE.search(key):
+            out[key] = str(value)
+    return out
+
 
 def load_budgets_env(cfg: "Config") -> dict[str, str]:
     """Read paths.budgets_env (KEY=value shell file) into os.environ.
@@ -199,7 +217,17 @@ class Config:
 
     def path_in_home(self, rel: str) -> Path:
         p = Path(os.path.expanduser(str(rel)))
-        return p if p.is_absolute() else self.home / p
+        candidate = p if p.is_absolute() else self.home / p
+        # Dashboard inputs and outputs are deliberately confined to the Hermes
+        # home.  Resolve existing parents as well as `..` so symlinks cannot
+        # turn an apparently safe relative path into an outside write.
+        home = self.home.expanduser().resolve()
+        candidate = candidate.resolve(strict=False)
+        try:
+            candidate.relative_to(home)
+        except ValueError as exc:
+            raise ValueError(f"path escapes Hermes home: {rel}") from exc
+        return candidate
 
     def text(self, value, lang: str) -> str:
         """Localised string from {"en":..,"ru":..} or plain str."""
@@ -215,7 +243,7 @@ class Config:
     # ── derived ───────────────────────────────────────────────────────
     @property
     def out_dir(self) -> Path:
-        return Path(os.path.expanduser(str(self.raw["paths"]["out_dir"])))
+        return self.path_in_home(self.raw["paths"]["out_dir"])
 
     @property
     def languages(self) -> list[str]:
@@ -235,6 +263,13 @@ class Config:
     def validate(self) -> list[str]:
         """Human-readable problems (empty list = fine). Never raises."""
         errs: list[str] = []
+        for key in ("paths.out_dir", "paths.budgets_env", "paths.history_csv"):
+            value = self.get(key, "")
+            if value:
+                try:
+                    self.path_in_home(str(value))
+                except ValueError as e:
+                    errs.append(f"{key} must stay inside Hermes home ({e})")
         # providers.primary.id is deliberately NOT required: a fresh install saves
         # the form before it knows the value, and an empty id simply attributes no
         # traffic to a primary provider. What must be right is anything that would
