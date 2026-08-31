@@ -18,7 +18,8 @@ from datetime import date, datetime, timedelta
 from . import gen_chats
 from .common import (
     active, connect_ro, esc, eff_bar, fmt_tok, fmt_usd, free_cond, home,
-    forced_fallback_of, local_day, metrics, num, primary_id, provider_cond, read_json,
+    forced_fallback_of, local_day, metrics, num, primary_id, primary_model, provider_cond,
+    read_json,
     remain_color, sec,
     simple_bar, sql_str, ubar, yaml_get,
 )
@@ -326,7 +327,7 @@ def build() -> tuple[str, str]:
             "WHERE started_at >= strftime('%s','now','-30 days') GROUP BY d").fetchall()
     db.close()
     stt, stt_since = log_count(str(cfg.get("usage.stt_log_regex", "Transcribed")))
-    model_main = yaml_get("model.default", "") or os.environ.get("MODEL_MAIN", "")
+    model_main = primary_model()
     prim_label = str(prim.get("label") or pid)
     # dashboard.json is the source; budgets.env (loaded into the env by the build)
     # only fills a zero, so an alert cron and the bar can share one number.

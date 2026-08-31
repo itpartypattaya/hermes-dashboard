@@ -183,6 +183,7 @@ look like a cost export.
 | `HERMES_DASHBOARD_ANTHROPIC_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` | Cost API access for real $ |
 | `HERMES_DASHBOARD_ANTHROPIC_COST_CSV` | explicit path of a Cost Report CSV instead of the newest one in `cache/` |
 | `HERMES_DASHBOARD_QUOTA_ALERT_PCT` | threshold for the quota collector's `--alert` mode (also settable in `budgets.env`) |
+| `MODEL_MAIN` | name of the primary model when `config.yaml` does not declare `model.default` |
 | `HERMES_DASHBOARD_SCAN_EXTRA` | your own strings for the hygiene test |
 
 ## Languages

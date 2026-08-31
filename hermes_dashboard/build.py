@@ -20,7 +20,7 @@ from pathlib import Path
 from . import (gen_banner, gen_connectors, gen_cron, gen_events, gen_security, gen_usage,
                history, render, sysinfo)
 from .common import (active, atomic_write, deliberate_paid, esc, fallback, fmt_tok, home,
-                     paid, read_text_safe, scalar, yaml_get)
+                     paid, primary_id, primary_model, read_text_safe, scalar, yaml_get)
 from .config import Config, child_environment, load_budgets_env, load_config, set_current
 from .i18n import _, set_lang
 
@@ -82,9 +82,22 @@ def run_collectors(cfg: Config) -> None:
             print(f"[collector] {cmd[-1]}: not run ({e})", file=sys.stderr)
 
 
-# Shape of memory_facts(); used when the probe fails so the view still renders.
-MEMORY_UNKNOWN = {"MEMCH": 0, "USERCH": 0, "MEMLIM": 0, "USERLIM": 0, "MEMENT": 0,
-                  "MEMPCT": None, "USERPCT": None}
+def _memory_dict(memch: int = 0, userch: int = 0, memlim: int = 0,
+                 userlim: int = 0, ment: int = 0) -> dict:
+    """The one place that says what memory_facts() returns.
+
+    A second literal spelling the same keys (the fallback used when the probe
+    fails) drifts the moment a key is added: the view indexes these directly,
+    so a missing one turns a failed probe into a failed page.
+    """
+    return {"MEMCH": memch, "USERCH": userch, "MEMLIM": memlim, "USERLIM": userlim,
+            "MEMENT": ment,
+            # no declared limit → no percentage; a made-up denominator would be a lie
+            "MEMPCT": memch * 100 // memlim if memlim else None,
+            "USERPCT": userch * 100 // userlim if userlim else None}
+
+
+MEMORY_UNKNOWN = _memory_dict()
 
 
 def memory_facts(cfg: Config) -> dict:
@@ -102,10 +115,7 @@ def memory_facts(cfg: Config) -> dict:
     memlim = limit("memory_char_limit", cfg.number("memory.memory_char_limit_default", 2600, int))
     userlim = limit("user_char_limit", cfg.number("memory.user_char_limit_default", 1700, int))
     ment = read_text_safe(home() / cfg.get("memory.memory_file", "memories/MEMORY.md")).count("§")
-    return {"MEMCH": memch, "USERCH": userch, "MEMLIM": memlim, "USERLIM": userlim, "MEMENT": ment,
-            # no declared limit → no percentage; a made-up denominator would be a lie
-            "MEMPCT": memch * 100 // memlim if memlim else None,
-            "USERPCT": userch * 100 // userlim if userlim else None}
+    return _memory_dict(memch, userch, memlim, userlim, ment)
 
 
 def cls_pct(p) -> str:
@@ -131,7 +141,7 @@ def s(v, dash="—"):
 def chain_card(cfg: Config, state: dict) -> str:
     """Routing policy: primary → paid fallbacks → free tiers, with the live active step."""
     prim = cfg.get("providers.primary", {})
-    model_main = yaml_get("model.default", "")
+    model_main = primary_model()
 
     def node(key, rank, name, desc, price, extra=""):
         cls, pip, note = "lnk", "pip off", ""
@@ -317,6 +327,21 @@ def config_map_html(cfg: Config, lang: str) -> str:
             f'<div class="printonly">{_("system dashboard")} · {_("Config")}</div></section>')
 
 
+def _warn_primary_mismatch(cfg: Config) -> None:
+    """dashboard.json and the agent's config.yaml both name a primary provider.
+
+    Nothing reconciles them, and a mismatch is invisible: cost attribution goes
+    to a provider the agent never uses, so the primary card reads zero and every
+    real session looks like a paid fallback. Cheap to notice, expensive to debug.
+    """
+    declared = str(cfg.get("providers.primary.id", "") or "")
+    running = str(yaml_get("model.provider", "") or "")
+    if declared and running and declared != running:
+        print("[config] providers.primary.id is %r but config.yaml says model.provider is %r "
+              "— cost will be attributed to a provider the agent does not use"
+              % (declared, running), file=sys.stderr)
+
+
 def _safe(name: str, fn, fallback_html: str = "") -> str:
     """Run a section generator; a crash costs that section, not the page.
 
@@ -348,6 +373,7 @@ def build_all(cfg: Config, only_lang: str | None = None, out_dir: Path | None = 
 
 def _build_pages(cfg: Config, only_lang: str | None, out_dir: Path) -> list[Path]:
     load_budgets_env(cfg)   # HERMES_DASHBOARD_QUOTA_ALERT_PCT etc. reach the collectors without a wrapper
+    _warn_primary_mismatch(cfg)
     _safe("collectors", lambda: run_collectors(cfg))
     k = _safe("kpis", lambda: collect_kpis(cfg), {})
     m = _safe("memory", lambda: memory_facts(cfg), MEMORY_UNKNOWN)

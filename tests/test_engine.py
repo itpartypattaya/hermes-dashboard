@@ -420,6 +420,59 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(ac._error_message(err(b"<html>oops</html>")), "(unparseable error body)")
         self.assertEqual(ac._error_message(err(b'{"error":{}}')), "(no message in the error body)")
 
+    # ── fifth sweep ────────────────────────────────────────────────────────
+
+    def test_one_rule_for_the_primary_model_name(self):
+        """The chain read model.default; the cost card read it *or* $MODEL_MAIN,
+        so with only the env var set the two named different models."""
+        import inspect
+        from hermes_dashboard import build as bld, gen_usage
+        for mod in (bld, gen_usage):
+            self.assertNotIn('yaml_get("model.default", "") or os.environ',
+                             inspect.getsource(mod), f"{mod.__name__} keeps its own rule")
+        home = make_home()
+        os.environ["HERMES_HOME"] = str(home)
+        config.set_current(config.Config({}))
+        (home / "config.yaml").write_text("provider: x\n", encoding="utf-8")
+        os.environ["MODEL_MAIN"] = "from-env"
+        try:
+            self.assertEqual(common.primary_model(), "from-env")
+            (home / "config.yaml").write_text("model:\n  default: from-yaml\n", encoding="utf-8")
+            self.assertEqual(common.primary_model(), "from-yaml", "config.yaml wins")
+        finally:
+            del os.environ["MODEL_MAIN"]
+
+    def test_the_memory_dict_has_one_declaration(self):
+        """The failure fallback used to be a second literal of the same keys —
+        add a key to the probe and a failed probe becomes a failed page."""
+        from hermes_dashboard import build as bld
+        self.assertEqual(set(bld.MEMORY_UNKNOWN), set(bld._memory_dict(1, 2, 3, 4, 5)))
+        self.assertEqual(bld.MEMORY_UNKNOWN["MEMPCT"], None)
+        self.assertEqual(bld._memory_dict(50, 0, 100)["MEMPCT"], 50)
+
+    def test_a_primary_mismatch_between_the_two_configs_is_reported(self):
+        """dashboard.json and config.yaml both name a primary; nothing reconciled
+        them, so cost went to a provider the agent never used, silently."""
+        import io
+        from contextlib import redirect_stderr
+        from hermes_dashboard import build as bld
+        home = make_home()
+        os.environ["HERMES_HOME"] = str(home)
+        (home / "config.yaml").write_text("model:\n  provider: anthropic\n", encoding="utf-8")
+        cfg = config.Config({"providers": {"primary": {"id": "openai-codex"}}})
+        config.set_current(cfg)
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            bld._warn_primary_mismatch(cfg)
+        self.assertIn("openai-codex", buf.getvalue())
+        self.assertIn("anthropic", buf.getvalue())
+        # agreement is silent
+        (home / "config.yaml").write_text("model:\n  provider: openai-codex\n", encoding="utf-8")
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            bld._warn_primary_mismatch(cfg)
+        self.assertEqual(buf.getvalue(), "")
+
     # ── fourth sweep: one concept, one implementation ──────────────────────
 
     def test_an_uploaded_export_is_found_whatever_the_provider_is_called(self):

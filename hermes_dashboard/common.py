@@ -242,6 +242,17 @@ def is_free_row(prov: str, model: str = "", cfg: Config | None = None) -> bool:
     return False
 
 
+def primary_model() -> str:
+    """Name of the model the agent thinks with, by one rule.
+
+    The routing chain read `model.default` while the cost card read
+    `model.default or $MODEL_MAIN`, so with only the env var set the two views
+    named different models on the same page.
+    """
+    import os
+    return yaml_get("model.default", "") or os.environ.get("MODEL_MAIN", "")
+
+
 def primary_id(cfg: Config | None = None) -> str:
     return str((cfg or current()).get("providers.primary.id", ""))
 

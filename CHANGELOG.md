@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.7.1 — 2026-08-31
+
+Fifth sweep, same vein. Three more places where one idea had two spellings — one
+of them introduced by the containment work in v0.6.0.
+
+* **Two rules for the primary model's name.** The routing chain read
+  `model.default`; the cost card read `model.default` *or* `$MODEL_MAIN`. With
+  only the environment variable set, the two views named different models on the
+  same page. One `primary_model()` now, and `MODEL_MAIN` is documented.
+* **Two declarations of the memory dict.** v0.6.0 added a literal fallback for
+  when the memory probe fails, spelling out the same keys the probe returns. Add
+  a key to the probe and a failed probe becomes a failed page. Both come from one
+  constructor now.
+* **Nobody checked that the two configs agree on the primary provider.**
+  `dashboard.json` names one and the agent's `config.yaml` names another; a
+  mismatch is invisible and expensive — cost is attributed to a provider the agent
+  never uses, so the primary card reads zero and every real session looks like a
+  paid fallback. The build says so on stderr now.
+
+Tests: 63 → 66.
+
+
 ## v0.7.0 — 2026-08-31
 
 The fourth sweep went straight at the pattern the third one named: a concept with
