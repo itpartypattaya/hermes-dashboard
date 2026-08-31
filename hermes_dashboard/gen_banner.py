@@ -15,13 +15,56 @@ import time
 from datetime import datetime
 
 from .common import (active, connect_ro, esc, home, is_paid_row, paid, paid_label, primary_id,
-                     src_in, tz)
+                     read_text_safe, src_in, tz)
 from .config import current
 from .i18n import _
 
 
 def _src_in() -> str:
     return src_in() + " AND " + active()
+
+
+# Statuses the core writes on a pool entry that cannot serve. "dead" and an
+# explicit 401 mean the credential was *rejected*: unlike an exhausted quota it
+# never comes back on its own, and every answer meanwhile is billed elsewhere.
+_REJECTED_STATUSES = {"dead", "invalid", "revoked", "unauthorized"}
+_REJECTED_CODES = {401, 403}
+
+
+def primary_credential_problem() -> tuple[str, str] | None:
+    """(kind, detail) when the primary provider's credential cannot answer.
+
+    kind is "rejected" — only a new login fixes it — or "cooldown", which
+    resets by itself. None means healthy.
+
+    Both were previously funnelled through a single cooldown check that spoke
+    only when it could name a reset time or saw a 429, so the most expensive
+    state of all — a credential invalidated at 401, every answer silently on the
+    paid fallback until a human notices — displayed nothing at all.
+    """
+    try:
+        d = json.loads(read_text_safe(home() / "auth.json", "null"))
+    except ValueError:
+        return None
+    if not isinstance(d, dict):
+        return None
+    for e in (d.get("credential_pool", {}) or {}).get(primary_id(), []) or []:
+        if not isinstance(e, dict):
+            continue
+        status = str(e.get("last_status") or "").lower()
+        code = e.get("last_error_code")
+        if status in _REJECTED_STATUSES or code in _REJECTED_CODES:
+            reason = str(e.get("last_error_message") or e.get("last_error_reason") or "").strip()
+            return "rejected", reason[:160]
+        if status == "exhausted":
+            try:
+                reset = float(e.get("last_error_reset_at"))
+            except (TypeError, ValueError):
+                reset = None
+            if reset and reset > time.time():
+                return "cooldown", datetime.fromtimestamp(reset, tz()).strftime("%d.%m %H:%M")
+            return "cooldown", ""       # no reset time is still a cooldown, not silence
+    return None
 
 
 def primary_cooldown() -> str | None:
@@ -69,11 +112,17 @@ def latest_paid_session():
 
 def build() -> str:
     prim = str(current().get("providers.primary.label", "primary"))
-    cooldown = primary_cooldown()
-    if cooldown is not None:
-        first = current().get("providers.paid", [{}])
-        first_label = str((first[0] if first else {}).get("label", "") or _("paid fallback"))
-        reset_txt = " " + _("{p} recovery ~<b>{t}</b>.").format(p=prim, t=esc(cooldown)) if cooldown else ""
+    first = current().get("providers.paid", [{}])
+    first_label = str((first[0] if first else {}).get("label", "") or _("paid fallback"))
+    problem = primary_credential_problem()
+    if problem is not None:
+        kind, detail = problem
+        if kind == "rejected":
+            why = " " + _("Provider says: <b>{r}</b>.").format(r=esc(detail)) if detail else ""
+            return _wrap(_("⛔ <b>The {p} credential was rejected.</b> It will not recover on its "
+                           "own — sign in again; until then every answer is billed to the paid "
+                           "fallback ({f}).").format(p=esc(prim), f=esc(first_label)) + why)
+        reset_txt = " " + _("{p} recovery ~<b>{t}</b>.").format(p=prim, t=esc(detail)) if detail else ""
         return _wrap(_("⚠️ <b>A paid model is answering.</b> {p} is unavailable (quota/limit) — answers go through the paid fallback ({f}).").format(p=esc(prim), f=esc(first_label)) + reset_txt)
     latest = latest_paid_session()
     if latest:

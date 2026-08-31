@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.7.2 — 2026-08-31
+
+**A rejected primary credential is now announced.** It was the one failure the
+banner could not describe, and the most expensive: unlike an exhausted quota,
+a credential invalidated at 401 never recovers on its own, so every answer goes
+to the paid fallback until a human happens to notice. Found on the reference
+install, where the primary had been rejected for fourteen hours with nothing on
+the page saying so.
+
+Two gaps, one shape — a detector built for one failure mode and blind to the
+neighbouring one:
+
+* `last_status: "dead"` / `last_error_code: 401` was not looked at at all; only
+  `"exhausted"` was.
+* Even `"exhausted"` stayed silent unless it could name a reset time or saw a
+  429, so an exhausted entry with neither displayed nothing.
+
+`primary_credential_problem()` now reports both, the banner distinguishes them,
+and the rejected case says what to do about it — the quota watchdog cannot warn
+here, because it authenticates with the same broken credential.
+
+Tests: 66 → 67.
+
+
 ## v0.7.1 — 2026-08-31
 
 Fifth sweep, same vein. Three more places where one idea had two spellings — one

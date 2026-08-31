@@ -284,6 +284,7 @@
   "Processed · 30d": "Всего обработано · 30д",
   "Profile limit fallback": "Запасной лимит профиля",
   "Prompt-injection evals": "Prompt-injection evals",
+  "Provider says: <b>{r}</b>.": "Провайдер говорит: <b>{r}</b>.",
   "Providers": "Провайдеры",
   "Providers and money": "Провайдеры и деньги",
   "Quota cache file": "Файл кеша квоты",
@@ -680,5 +681,6 @@
   "…{n} more jobs": "…ещё {n} джоб",
   "≈ runs/week without LLM": "≈ прогонов/нед без LLM",
   "⚠️ <b>A paid model is answering.</b> {p} is unavailable (quota/limit) — answers go through the paid fallback ({f}).": "⚠️ <b>Работает платная модель.</b> {p} недоступен (квота/лимит) — ответы идут через платный fallback ({f}).",
-  "⚠️ <b>The last answer came from a paid model</b> ({m}, {w}). {p} was temporarily unavailable; check whether the primary provider is back.": "⚠️ <b>Последний ответ — на платной модели</b> ({m}, {w}). {p} был временно недоступен; проверь, вернулся ли основной провайдер."
+  "⚠️ <b>The last answer came from a paid model</b> ({m}, {w}). {p} was temporarily unavailable; check whether the primary provider is back.": "⚠️ <b>Последний ответ — на платной модели</b> ({m}, {w}). {p} был временно недоступен; проверь, вернулся ли основной провайдер.",
+  "⛔ <b>The {p} credential was rejected.</b> It will not recover on its own — sign in again; until then every answer is billed to the paid fallback ({f}).": "⛔ <b>Учётка {p} отвергнута.</b> Сама она не восстановится — нужен повторный вход; до этого каждый ответ оплачивается платным фоллбэком ({f})."
 }

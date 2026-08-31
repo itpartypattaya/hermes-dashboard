@@ -420,6 +420,44 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(ac._error_message(err(b"<html>oops</html>")), "(unparseable error body)")
         self.assertEqual(ac._error_message(err(b'{"error":{}}')), "(no message in the error body)")
 
+    # ── sixth sweep ────────────────────────────────────────────────────────
+
+    def test_a_rejected_primary_credential_is_announced(self):
+        """A 401'd credential is not an exhausted quota: it never recovers.
+
+        The banner only spoke when it could name a reset time or saw a 429, so
+        the most expensive state — the primary rejected, every answer silently
+        billed to the paid fallback — displayed nothing at all.
+        """
+        import json as _json
+        from hermes_dashboard import gen_banner
+        home = Path(tempfile.mkdtemp(prefix="hd-cred-"))
+        os.environ.pop("HERMES_HOME", None)
+        cfg = config.Config({"paths": {"hermes_home": str(home)},
+                             "providers": {"primary": {"id": "p", "label": "Prim"},
+                                           "paid": [{"id": "a", "label": "Paid"}]}})
+        config.set_current(cfg)
+        i18n.set_lang("en")
+
+        def state(entry):
+            (home / "auth.json").write_text(_json.dumps({"credential_pool": {"p": [entry]}}),
+                                            encoding="utf-8")
+            return gen_banner.primary_credential_problem()
+
+        kind, detail = state({"last_status": "dead", "last_error_code": 401,
+                              "last_error_message": "token invalidated"})
+        self.assertEqual(kind, "rejected")
+        self.assertIn("invalidated", detail)
+        self.assertIn("sign in again", gen_banner.build())
+        # a 401 alone is enough, whatever the status string says
+        self.assertEqual(state({"last_status": "ok", "last_error_code": 401})[0], "rejected")
+        # an exhausted quota with no reset time is still worth saying out loud
+        self.assertEqual(state({"last_status": "exhausted"}), ("cooldown", ""))
+        self.assertIn("quota/limit", gen_banner.build())
+        # and a healthy pool stays quiet
+        self.assertIsNone(state({"last_status": "ok"}))
+        self.assertEqual(gen_banner.build(), "")
+
     # ── fifth sweep ────────────────────────────────────────────────────────
 
     def test_one_rule_for_the_primary_model_name(self):
