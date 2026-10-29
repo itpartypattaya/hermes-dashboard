@@ -33,6 +33,7 @@ exactly the same code as production. Nothing in it is real.
 | **Overview** | gateway / uptime / load / disk / RAM, sessions and fallback KPIs with week-over-week deltas, the routing chain with the *live* active step, a curated event feed, security tiles (scanner fail-open, watchdog status, rules-file date, evals count) |
 | **Cost** | primary-model card (weekly budget bar, cache hit rate, reasoning share, session sources), live subscription quota, one card per **paid** provider with money in three layers of certainty, free tiers, OAuth connectors, auxiliary providers — then analytics: economics, routing health, tokens by day (stacked), activity, top tools, requests by chat |
 | **Memory** | durable facts and their growth, bounded files against their limits, memory-tool calls, transcript count, the memory pipeline diagram |
+| **Memory map** *(experimental)* | *off by default* (`views.memory_map`); see [Memory map (experimental)](#memory-map-experimental) for its risks: what the agent actually remembers, from the holographic plugin's read-only export — overview with what waits for your decision, people and topics, a card per name and per fact (source, trust in words, versions), contradictions, weak basis, the week, removed and closed (a forgotten fact is only its number and date), about the snapshot |
 | **Automation** | day timeline of every cron job (agent cron + system crontab), no-op economy, jobs grouped by billing tier, per-job token telemetry |
 | **Config** | live config map: engine defaults ↔ effective `config.yaml` ↔ a git truth ref, with a **drift** column and hand-written descriptions |
 | **Capability map** | separate page: MCP connectors, channels, plugins, model chain, web access, custom skills, bundled packs — read from the real config |
@@ -95,6 +96,7 @@ the page builds, and stderr says why.
 | **Config** view (engine defaults ↔ effective ↔ truth ref) | `paths.venv_python` = the agent's venv (imports the core's `DEFAULT_CONFIG` and PyYAML), the agent checkout at `$HERMES_HOME/hermes-agent`, and `git` for `config_map.truth_ref` (drift against `origin/main` needs a remote). `paths.node` is optional and only runs a self-check of the view's inline script. |
 | **Subscription quota** card | `paths.venv_python` again (the collector calls the core's `account_usage` API for `providers.primary.id`) and `providers.primary.quota_cache` set. |
 | **Real $ on a paid-provider card** | an Anthropic admin key in `HERMES_DASHBOARD_ANTHROPIC_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` (env or `.env`), **or** a Cost Report CSV in `cache/` (upload it from the settings page). Other providers stay on the estimate. |
+| **Memory map** tab | the holographic memory plugin with its `memory_map.py` exporter at `memory_map.plugin_dir`, and `views.memory_map: true`. The exporter runs in its own process with a timeout; the plugin decides what may be shown, the tab only draws it. A failed export leaves the tab saying so, never numbers. |
 | **Config descriptions** (the prose column of the Config view) | a hand-written JSON per language at `paths.config_descriptions.<lang>` — format in `examples/config-descriptions.en.json`. |
 | **Week-over-week deltas** | nothing, but they need history: the build appends one row per day to `paths.history_csv`, so deltas appear after the first week. |
 
@@ -105,6 +107,7 @@ the page builds, and stderr says why.
 | tokens, cost, sessions, providers, chats | `state.db` → `sessions` |
 | tool calls, memory-tool usage, OAuth connectors | `state.db` → `messages.tool_name` |
 | durable fact count | `memory_store.db` → `facts` |
+| memory map (when on) | the holographic plugin's `memory_map.py --json` over one store (+ the nightly review's files about that store) |
 | bounded memory fill | `memories/*.md` against the limits in `config.yaml` |
 | cron timeline, job status, watchdogs, no-op economy | `cron/jobs.json` + `crontab -l` |
 | model chain, vision/STT/TTS, MCP servers, plugins, channels | `config.yaml` (+ `.env` **variable names** only — values are never read) |
@@ -133,7 +136,8 @@ the settings page.
 | `security` | rules file, evals file, bullets per language, scanner regex, alert channel label |
 | `memory` | bounded file paths, limit fallbacks, backup branch label |
 | `connectors` | per-key descriptions and curated extra cards for the capability map |
-| `views` | whether to build the config map and the capability map at all; `web_fonts` (default on) toggles the Google Fonts link |
+| `views` | whether to build the config map and the capability map at all, `memory_map` (default off) for the memory map tab; `web_fonts` (default on) toggles the Google Fonts link |
+| `memory_map` | `plugin_dir` (the folder with `memory_map.py`), `store`, `python`, `timeout_s`, `dreaming` (read the nightly review's questions about this store) |
 
 ## Settings page
 
@@ -200,8 +204,10 @@ locale is incomplete.
 
 * Regenerate from cron (`examples/crontab`). A build takes seconds and writes atomically,
   so a reader never catches half a page.
-* The pages are private by design: `noindex`, no page runtime, no secrets — only aggregates.
-  Put them behind basic-auth over TLS anyway (`examples/nginx.conf`).
+* The pages are private by design: `noindex`, no page runtime, no secrets — only aggregates,
+  **except the memory map tab** when it is on: it shows the texts of the agent's facts about
+  people. Put the pages behind basic-auth over TLS (`examples/nginx.conf`) — with the memory
+  map on, that is a requirement, not a nicety.
 * **One external request remains by default:** the typefaces come from `fonts.googleapis.com`,
   so every view tells Google an IP and a timestamp. For a dashboard nobody should know you are
   reading, set `views.web_fonts: false` — the layout falls back to the system stack and the page
@@ -232,6 +238,86 @@ scan for classes of leaked identifiers. To check your own installation's strings
 ```bash
 HERMES_DASHBOARD_SCAN_EXTRA="my-host,my-repo,@myhandle" bin/hermes-dashboard check
 ```
+
+## Memory map (experimental)
+
+The **Memory map** tab is new and experimental: what it shows, its wording and the
+export format behind it may change between releases. It is off unless
+`views.memory_map` is `true`. Read the risks below first.
+
+### Turning it on
+
+1. Install the holographic memory plugin 0.24.0 or later (it has `memory_map.py`) in the agent:
+   `hermes plugins install holographic`. The dashboard does not copy or import it; it runs the plugin's exporter.
+2. In `dashboard.json` set the view and say where the plugin and the store are (paths relative to the agent home):
+
+   ```json
+   "views": { "memory_map": true },
+   "memory_map": {
+     "plugin_dir": "plugins/holographic",
+     "store": "memory_store.db",
+     "python": "",
+     "timeout_s": 60,
+     "dreaming": true
+   }
+   ```
+
+   `store` is one file: the profile's `memory_store.db`, or one scope's `.db` for a map of one user or chat (scopes
+   are never mixed). `python` empty uses `paths.venv_python`. `dreaming` adds what the nightly review
+   ([hermes-dreaming](https://github.com/itpartypattaya/hermes-dreaming)) asks about this store.
+3. Build once by hand (`bin/hermes-dashboard build --config <your dashboard.json>`) and open the **Memory map** tab.
+   "Memory map unavailable" names the reason (no plugin, no store, an exporter without `--config`, a timeout); the
+   build log has `[section] memory-map failed: …`.
+4. Check the page is behind the password: a request without credentials must get `401`
+   (`curl -s -o /dev/null -w "%{http_code}" https://your-host/`). The cron entry of `examples/crontab` rebuilds it with
+   the other pages.
+
+To try the tab without an agent, `python tools/make_demo.py /tmp/demo` builds the demo site (an invented family) with it on.
+
+### Before you turn it on
+
+* **It shows personal data.** Unlike the rest of the dashboard (aggregates), the tab
+  holds the texts of what the agent remembers — names, family, plans, habits — in the
+  generated HTML. Serve it **only behind basic-auth over TLS** (`examples/nginx.conf`);
+  never on a public URL, never in a repository, never forwarded. A copy someone saved or
+  forwarded is not reached by a later «forget»: deleting it is up to them.
+* **Every local account on the server can read it unless you close the folder.** Basic-auth
+  guards the web only. Pages are written readable by all (0644), so on a shared host (a
+  hosting panel, other sites' PHP) any local user reaches them when every folder from `/`
+  to `out_dir` lets others in. With the tab on, the build log says so
+  (`[section] memory-map: every local user can read the pages…`). Close the folder to all
+  but the web server's group, keeping the group for new files:
+  `sudo chgrp www-data <out_dir> && sudo chmod 2750 <out_dir>` (the user that builds keeps
+  writing as owner; use your web server's group if it is not `www-data`).
+* **The exporter gets no credentials.** It runs with the agent home and the dashboard's
+  environment minus anything shaped like a secret, and minus the Anthropic admin key the
+  usage collector reads. A failure line in the build log names the error's kind, never its
+  message (a message could quote a stored text). On Linux a timeout stops the exporter's
+  whole process group, so a wrapper in `memory_map.python` does not leave it running.
+* **It is a snapshot from the last build.** The tab is regenerated with the rest of the
+  pages by cron (`examples/crontab`: every 30 minutes), so it can be up to that old: a
+  fact forgotten a minute ago can still show its text until the next build.
+* **It needs a holographic plugin with `memory_map.py` and its `--config` option** —
+  holographic 0.24.0 or later. The dashboard passes `--config
+  <home>/config.yaml` whenever that file exists, and an exporter without the option
+  exits with an error: the tab then says "Memory map unavailable" and the build log
+  gets `[section] memory-map failed`.
+* **One store, read-only.** The exporter opens one store read-only and applies every
+  privacy rule itself (a forgotten fact is its number and date, a corrected version
+  and what the safety screen hides carry no text); the tab only draws what it gets.
+  The nightly review's files are read only about that store. Records of those files in
+  a shape the exporter does not know are left out and counted on "About the snapshot".
+* **Its readings are narrow.** "Person" or "topic" comes from a short closed list of
+  words beside a name (most names stay "not determined"); "which fact the agent leans
+  on" holds only for a question that fits both facts equally and says nothing with the
+  reranker on; contradictions are the plugin's heuristic. There is no usage journal yet.
+  The plugin's `docs/memory-map.md` lists all of its limits.
+* **The whole map is inside `index.html`.** Every visit to any tab downloads it: about
+  50 KB of export for 40 facts, but on a test store of 10,000 facts and 1,000 names the
+  page grew to about 26 MB and took 8 s to draw per language. There is no cap yet.
+* **A build waits for the export** (`memory_map.timeout_s`, 60 s by default). On a
+  store in rollback-journal mode the agent's writes wait while it reads (under a second
+  on a 3,000-fact test store).
 
 ## Limitations
 

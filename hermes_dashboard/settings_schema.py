@@ -276,10 +276,33 @@ SCHEMA = [
                 {"path": "memory.user_char_limit_default", "kind": "int", "label": "Profile limit fallback",
                  "unit": "chars"},
             ]},
+            {"title": "Memory map", "intro":
+                "The tab is drawn from a snapshot the holographic plugin exports itself, read-only and in a "
+                "separate process; the plugin decides what may be shown (forgotten facts are only a number and a "
+                "date). If the export fails, the tab says so instead of showing numbers.",
+             "fields": [
+                 {"path": "memory_map.plugin_dir", "kind": "text", "label": "Plugin folder",
+                  "help": "The folder with memory_map.py, relative to the agent home (or absolute).",
+                  "placeholder": "plugins/holographic"},
+                 {"path": "memory_map.store", "kind": "text", "label": "Store file",
+                  "help": "One store per map, relative to the agent home. Other scopes are never mixed in."},
+                 {"path": "memory_map.python", "kind": "text", "label": "Python for the export",
+                  "help": "Empty: the agent's venv python, else the dashboard's own."},
+                 {"path": "memory_map.timeout_s", "kind": "int", "label": "Export timeout", "unit": "s",
+                  "help": "A slower export leaves the tab unavailable on that build; the rest of the dashboard "
+                          "is built as usual."},
+                 {"path": "memory_map.dreaming", "kind": "bool", "label": "Include the nightly review",
+                  "help": "Questions of the nightly review (duplicates, «still relevant?», approvals) — only "
+                          "when they are about this store."},
+             ]},
             {"title": "Views and the capability map", "fields": [
                 {"path": "views.config_map", "kind": "bool", "label": "Build the Config view",
                  "help": "Needs the Hermes venv python. Off removes the tab entirely."},
                 {"path": "views.connectors", "kind": "bool", "label": "Build the capability map"},
+                {"path": "views.memory_map", "kind": "bool", "label": "Build the memory map tab",
+                 "help": "Every fact the agent keeps, with its source and trust, behind the dashboard's password. "
+                         "Needs the holographic plugin's exporter (see the Memory map card). Off removes the tab "
+                         "and runs nothing."},
                 {"path": "connectors.skills_from_gitignore", "kind": "bool", "label": "«Our» skills from .gitignore",
                  "help": "On: custom skills are the allowlist entries !/skills/<name>/. Off: every directory in skills/."},
                 {"path": "config_map.truth_ref", "kind": "text", "label": "Git ref of the source of truth",

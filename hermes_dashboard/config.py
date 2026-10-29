@@ -135,7 +135,17 @@ DEFAULTS: dict[str, Any] = {
     "views": {
         # Google Fonts is the only request a page makes to anything but your own
         # server. Off = system fonts and a page that phones nobody.
-        "web_fonts": True,"config_map": True, "connectors": True},
+        "web_fonts": True,"config_map": True, "connectors": True,
+        # The memory map tab: every fact the agent keeps, its source and trust.
+        # Off by default — it puts the whole memory behind the dashboard's password.
+        "memory_map": False},
+    "memory_map": {
+        "plugin_dir": "",                  # the holographic plugin (has memory_map.py), relative to the agent home
+        "store": "memory_store.db",        # ONE store; other scopes are never mixed in
+        "python": "",                      # empty = paths.venv_python, else the dashboard's own python
+        "timeout_s": 60,                   # a slower export fails this tab, not the build
+        "dreaming": True,                  # also read the nightly review's questions about this store
+    },
     "config_map": {"truth_ref": "origin/main"},
 }
 
@@ -169,7 +179,7 @@ _SECRET_ENV_RE = re.compile(
 _CHILD_ENV_KEEP = ("HERMES_DASHBOARD_ANTHROPIC_ADMIN_KEY", "ANTHROPIC_ADMIN_KEY")
 
 
-def child_environment(home: Path, extra: dict | None = None) -> dict:
+def child_environment(home: Path, extra: dict | None = None, credentials: bool = True) -> dict:
     """Environment for a process the dashboard spawns, minus other people's secrets.
 
     This is a *denylist*, deliberately, and the choice is worth explaining. A
@@ -183,10 +193,12 @@ def child_environment(home: Path, extra: dict | None = None) -> dict:
     our own code, and the point is only to shrink what it could ever spill.
 
     So: keep the environment, drop what is shaped like a credential, then put
-    back the one credential our own collector documents that it reads.
+    back the one credential our own collector documents that it reads — unless
+    `credentials` is false: a child that is not our collector (the memory
+    plugin's exporter) gets none.
     """
     keep = {k: v for k, v in os.environ.items() if not _SECRET_ENV_RE.search(k)}
-    for name in _CHILD_ENV_KEEP:
+    for name in _CHILD_ENV_KEEP if credentials else ():
         if name in os.environ:
             keep[name] = os.environ[name]
     keep["HERMES_HOME"] = str(home)
@@ -309,7 +321,8 @@ class Config:
                           ("providers.primary.ref_out_per_m", float),
                           ("providers.cost_fresh_days", int),
                           ("memory.memory_char_limit_default", int),
-                          ("memory.user_char_limit_default", int)):
+                          ("memory.user_char_limit_default", int),
+                          ("memory_map.timeout_s", float)):
             raw = self.get(key, 0)
             try:
                 cast(raw)

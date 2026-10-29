@@ -267,7 +267,15 @@
   },
   "views": {
     "config_map": true,
-    "connectors": true
+    "connectors": true,
+    "memory_map": false
+  },
+  "memory_map": {
+    "plugin_dir": "plugins/holographic",
+    "store": "memory_store.db",
+    "python": "",
+    "timeout_s": 60,
+    "dreaming": true
   },
   "config_map": {
     "truth_ref": "origin/main"

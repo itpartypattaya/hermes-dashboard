@@ -1,5 +1,60 @@
 # Changelog
 
+## v0.8.0 — 2026-10-30
+
+**Memory map tab — experimental** (off by default, `views.memory_map`; the header
+says «experimental» / «экспериментально»). Its wording and the export format behind it may
+change. It shows personal data: serve it only behind basic-auth over TLS; it needs the
+holographic memory-map release with `memory_map.py --config` (README, "Memory map
+(experimental)", for all the risks). What the agent actually
+remembers, for a person to read: an overview with what waits for a decision and
+five counters in words, people and topics, a card per name and per fact (who
+stands behind it, trust as weak / normal / strong, versions — a corrected one
+without its text), contradictions, facts on a weak basis, the week, removed and
+closed (a forgotten fact is its number and date, nothing else), and what the
+snapshot does and does not contain.
+
+The data is not read by the dashboard: the holographic memory plugin exports
+one store as JSON (`memory_map.py --json`) and applies every privacy rule
+itself; `gen_memory_map.py` runs it in a separate process with a timeout
+(`memory_map.plugin_dir`, `store`, `python`, `timeout_s`, `dreaming`) and only
+draws it, escaping every string — memory text comes from chat messages. A
+failed export (crash, not JSON, unknown format, hang, missing plugin or store)
+makes the tab say it is unavailable and logs `[section] memory-map failed`; the
+rest of the build is unaffected. Off, the pages are byte-for-byte what they
+were and nothing is spawned. The demo (`tools/make_demo.py`) shows an invented
+family.
+
+People, topics and names memory cannot type are listed apart (the export
+decides: a person only by what the store holds, never by a capital letter). A
+contradiction shows which fact the agent leans on now — the side search puts
+first by the plugin's own trust floor and trust x decay, read from the agent's
+`config.yaml` (passed as `--config`) — and why, or says that the question
+decides; plus the words that tell the two apart. A fact card draws its versions
+as bars on a time axis (from the record to the replacement; a corrected one
+without text), and a name card draws its connections around it (the 8 with
+most shared facts, the list has all). One number means one thing: the tab's
+button counts what its overview tile counts (names in question are no longer
+added to the weak facts), and only the numbers a person answers in the chat
+(D-NN) are shown.
+
+"About the snapshot" says how many records of the nightly review's files the
+export left out for another shape (the export lists them; their contents stay out).
+
+Review before release (30.10.2026): the exporter no longer gets the Anthropic
+admin key the usage collector reads (`child_environment(..., credentials=False)`);
+a record the tab cannot draw or an exporter that dies on a stored text leaves a
+log line with the error's kind only, never its message, and a fact number that is
+not a number is shown as `№?` instead of failing the tab; on Linux a timeout
+kills the exporter's process group (a wrapper such as `uv run` left the real
+exporter running); with the tab on, the build warns when every local user can
+read the pages and the README says how to close the folder (`chmod 2750`, the web
+server's group); the browser's Back button from the map returns to the view it
+names. Requires holographic 0.24.0 or later.
+
+Tests: 67 → 86 (two of them, the process group and the folder warning, run only on POSIX).
+
+
 ## v0.7.2 — 2026-08-31
 
 **A rejected primary credential is now announced.** It was the one failure the
