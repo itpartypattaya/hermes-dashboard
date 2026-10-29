@@ -135,7 +135,17 @@ DEFAULTS: dict[str, Any] = {
     "views": {
         # Google Fonts is the only request a page makes to anything but your own
         # server. Off = system fonts and a page that phones nobody.
-        "web_fonts": True,"config_map": True, "connectors": True},
+        "web_fonts": True,"config_map": True, "connectors": True,
+        # The memory map tab: every fact the agent keeps, its source and trust.
+        # Off by default — it puts the whole memory behind the dashboard's password.
+        "memory_map": False},
+    "memory_map": {
+        "plugin_dir": "",                  # the holographic plugin (has memory_map.py), relative to the agent home
+        "store": "memory_store.db",        # ONE store; other scopes are never mixed in
+        "python": "",                      # empty = paths.venv_python, else the dashboard's own python
+        "timeout_s": 60,                   # a slower export fails this tab, not the build
+        "dreaming": True,                  # also read the nightly review's questions about this store
+    },
     "config_map": {"truth_ref": "origin/main"},
 }
 
@@ -309,7 +319,8 @@ class Config:
                           ("providers.primary.ref_out_per_m", float),
                           ("providers.cost_fresh_days", int),
                           ("memory.memory_char_limit_default", int),
-                          ("memory.user_char_limit_default", int)):
+                          ("memory.user_char_limit_default", int),
+                          ("memory_map.timeout_s", float)):
             raw = self.get(key, 0)
             try:
                 cast(raw)

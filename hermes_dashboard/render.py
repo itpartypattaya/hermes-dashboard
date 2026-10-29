@@ -86,6 +86,8 @@ ICONS = {
     "cron": _svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>'),
     "cfg": _svg('<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h7M15 18h5"/><circle cx="15" cy="6" r="2"/>'
                 '<circle cx="9" cy="12" r="2"/><circle cx="13" cy="18" r="2"/>'),
+    "mmap": _svg('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="18" r="2.5"/>'
+                  '<path d="M8.3 6.4 15.5 6.9M7.2 8.2l3.6 7.6M16.9 9.3l-3.6 6.6"/>'),
     "map": _svg('<path d="M9 3 3 6v15l6-3 6 3 6-3V3l-6 3-6-3z"/><path d="M9 3v15M15 6v15"/>'),
     "set": _svg('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1'
                 'M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/>'),
@@ -101,6 +103,9 @@ def read_style() -> str:
 
 def view_list(cfg: Config) -> list[tuple[str, str]]:
     views = [("over", _("Overview")), ("cost", _("Cost")), ("mem", _("Memory")), ("cron", _("Automation"))]
+    if cfg.get("views.memory_map", False):
+        # off by default: the tab shows what the agent remembers, a choice to make, not a default
+        views.insert(3, ("mmap", _("Memory map")))
     if cfg.get("views.config_map", True):
         views.append(("cfg", _("Config")))
     return views

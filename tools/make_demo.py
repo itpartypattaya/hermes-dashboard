@@ -152,8 +152,154 @@ DASHBOARD_JSON = {
                                           "Control case: the shield does not choke normal requests"]},
                  "alert_channel_label": "ops channel"},
     "memory": {"backup_branch": "agent/state"},
-    "views": {"config_map": False, "connectors": True},
+    "views": {"config_map": False, "connectors": True, "memory_map": True},
+    # a stand-in for the holographic plugin's exporter: prints the family below
+    "memory_map": {"plugin_dir": "demo-memory-map"},
 }
+
+# ── the memory map: an invented family, in the exporter's JSON (schema_version 1) ──
+# (id, text, entities, category, origin, trust, days ago recorded, via, chat, by,
+#  confirmations [(days ago, by)], recalls, weak reasons)
+FAMILY_ENT = [(1, "Dmitry", ["Dima"]), (2, "Alena", ["Alyona"]), (3, "Varya", ["Varvara"]), (4, "Barsik", []),
+              (5, "Olga Petrovna", []), (6, "Timur", []), (7, "Lyceum No. 3", ["the lyceum"]),
+              (8, "Sosnovka dacha", ["the dacha"]), (9, "Batumi trip", ["Batumi"]),
+              (10, "Kitchen renovation", ["the kitchen"]), (11, "Grandma Nina", ["Nina Vasilyevna"]),
+              (12, "Dr. Mamedova", []), (13, "Swimming", ["the pool"])]
+PROVISIONAL = {5: 55, 13: 50}   # names guessed from one fact: id -> days ago
+FAMILY = [
+    (1, "Varya is in class 2B at Lyceum No. 3.", [3, 7], "school", "said", .65, 58, "tool", "dm", "Dmitry", [(40, "Alena")], 14, []),
+    (2, "Varya's class teacher is Olga Petrovna.", [3, 5, 7], "school", "said", .5, 55, "auto_extract", "dm", "Alena", [], 3, []),
+    (3, "School ends at 13:30; Alena picks Varya up.", [3, 2, 7], "school", "said", .55, 55, "tool", "dm", "Alena", [], 6, []),
+    (4, "Varya swims on Tuesdays and Thursdays at 17:00.", [3, 13], "activities", "said", .5, 50, "tool", "dm", "Dmitry", [], 9, []),
+    (5, "Varya's swimming moved to Wednesday, 17:30.", [3, 13], "activities", "said", .5, 10, "auto_extract", "group", "Alena", [], 1, []),
+    (6, "Varya is allergic to peanuts.", [3, 12], "health", "said", .7, 136, "tool", "dm", "Dmitry", [(118, "Dmitry"), (46, "Alena")], 22, []),
+    (7, "Varya's paediatrician is Dr. Mamedova; appointments on Saturdays.", [3, 12], "health", "said", .6, 136, "tool", "dm", "Dmitry", [], 4, []),
+    (8, "Alena does not eat dairy.", [2], "food", "inferred", .4, 88, "tool", "dm", "Dmitry", [], 5, ["unconfirmed_inference"]),
+    (9, "Alena asked to buy cottage cheese and cheese for a casserole.", [2], "food", "said", .5, 6, "auto_extract", "group", "Alena", [], 0, []),
+    (10, "Alena works at an architecture studio, remote on Mondays and Fridays.", [2], "work", "said", .55, 45, "tool", "dm", "Alena", [], 7, []),
+    (11, "Dmitry prefers reminders after 9 am.", [1], "preferences", "said", .65, 210, "tool", "dm", "Dmitry", [(150, "Dmitry"), (4, "Dmitry")], 31, []),
+    (12, "Dmitry seems to dislike phone calls in the morning.", [1], "preferences", "inferred", .4, 72, "tool", "dm", "Dmitry", [], 2, ["unconfirmed_inference"]),
+    (13, "Barsik eats only the Fish brand dry food.", [4], "home", "said", .55, 232, "tool", "dm", "Alena", [(81, "Varya")], 8, []),
+    (14, "Barsik needs a yearly vaccination; the last one was on 14 March.", [4], "health", "said", .5, 229, "tool", "dm", "Alena", [], 1, []),
+    (15, "Timur works in IT.", [6], "people", "unknown", .25, 115, "auto_extract", "group", None, [], 0, ["low_trust", "no_source"]),
+    (16, "Timur looks after Barsik when the family is away.", [6, 4], "home", "said", .55, 115, "tool", "dm", "Dmitry", [], 3, []),
+    (17, "An old bicycle is kept in the shed at the dacha.", [8], "dacha", "said", .5, 132, "tool", "dm", "Dmitry", [], 0, ["never_recalled"]),
+    (18, "There is no internet at the dacha; there is signal only by the gate.", [8], "dacha", "said", .5, 132, "tool", "dm", "Dmitry", [], 2, []),
+    (19, "The dacha is closed for the winter at the end of October.", [8], "dacha", "said", .55, 370, "tool", "dm", "Dmitry", [(11, "Dmitry")], 6, []),
+    (20, "Batumi trip: 8-15 November, the hotel is booked and paid.", [9], "trip", "said", .6, 18, "tool", "dm", "Dmitry", [], 5, []),
+    (21, "We fly to Batumi via Istanbul with a 3-hour layover.", [9], "trip", "said", .5, 8, "tool", "dm", "Dmitry", [], 1, []),
+    (22, "Grandma Nina is coming to Batumi with the family.", [9, 11], "trip", "said", .5, 7, "auto_extract", "group", "Alena", [], 1, []),
+    (24, "Arsen's crew does the kitchen; payment in stages.", [10], "renovation", "said", .55, 28, "tool", "dm", "Alena", [], 4, []),
+    (25, "The kitchen renovation budget is 420 thousand.", [10], "renovation", "said", .5, 25, "tool", "dm", "Dmitry", [], 3, []),
+    (26, "Grandma Nina lives in Tver and comes for the summer.", [11], "family", "unknown", .5, 400, "legacy", None, None, [], 4, []),
+    (27, "Grandma Nina takes her blood-pressure pills in the morning.", [11], "health", "unknown", .4, 400, "legacy", None, None, [], 2, []),
+    (28, "Varya is in second grade, 2B, lyceum number 3.", [3, 7], "school", "said", .5, 4, "auto_extract", "group", "Dmitry", [], 0, ["near_duplicate"]),
+    (31, "The family lives at 12 Garden Street.", [1, 2, 3], "home", "said", .6, 243, "tool", "dm", "Dmitry", [(178, "Alena")], 17, []),
+    (32, "Dmitry cycles to work.", [1], "preferences", "confirmed", .65, 142, "tool", "dm", "Dmitry", [(140, "Dmitry")], 4, []),
+    (33, "Friday is Varya's library day: the books must go back.", [3, 7], "school", "said", .5, 3, "auto_extract", "dm", "Alena", [], 1, []),
+    (34, "Varya wants a scooter for her birthday.", [3], "family", "said", .5, 5, "auto_extract", "group", "Varya", [], 0, []),
+    (36, "The pump at the dacha is broken; Timur promised to have a look.", [8, 6], "dacha", "said", .5, 4, "auto_extract", "group", "Dmitry", [], 0, []),
+    (39, "No internet at the dacha, only by the gate.", [8], "dacha", "said", .5, 9, "auto_extract", "group", "Dmitry", [], 0, ["near_duplicate"]),
+    (40, "The Wi-Fi router is in the hallway cupboard.", [], "home", "unknown", .5, 400, "legacy", None, None, [], 3, []),
+]
+DUP_OF = {28: 1, 39: 18}
+# facts with more than one version: id -> [(status, old text or None for the current one, from, to)] in days ago
+VERSIONS = {
+    1: [("changed", "Varya started class 1B at Lyceum No. 3.", 425, 60), ("current", None, 59, None)],
+    10: [("changed", "Alena works at an architecture studio.", 172, 46), ("current", None, 45, None)],
+    20: [("changed", "The Batumi trip is planned for early November.", 32, 19), ("current", None, 18, None)],
+    25: [("corrected", None, 28, 25), ("current", None, 25, None)],
+}
+ENDED = [(23, "The kitchen tiles arrive on 24 October.", [10], "renovation", 15, 5),
+         (30, "Varya goes to the Sunshine kindergarten.", [3], "family", 420, 60)]
+
+
+def demo_memory_map(offset_h: int) -> dict:
+    """The exporter's snapshot of the invented family, dated relative to today."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone(timedelta(hours=offset_h))).replace(microsecond=0)
+
+    def d(days):
+        return None if days is None else (now.date() - timedelta(days=days)).isoformat()
+
+    def level(t):
+        return "strong" if t >= .65 else "normal" if t >= .45 else "weak"
+
+    facts = []
+    for fid, text, ents, cat, origin, trust, rec, via, chat, by, conf, recalls, weak in FAMILY:
+        vs = VERSIONS.get(fid) or [("current", None, rec, None)]
+        f = {"id": fid, "text": text, "ents": ents, "cat": cat, "origin": origin, "trust": trust,
+             "trust_level": level(trust), "status": "current", "from": d(vs[-1][2]) if fid in VERSIONS else None,
+             "to": None, "to_exact": None, "rec": d(rec), "first": d(vs[0][2]), "via": via, "chat": chat, "by": by,
+             "conf": [{"d": d(a), "by": who} for a, who in conf], "recalls": recalls, "helpful": 0, "last": None,
+             "versions": [{"seq": i, "status": st, "text": None if st == "corrected" else (old or text),
+                           "from": d(a), "to": d(b), "to_exact": b is not None,
+                           "rec": d(rec) if st == "current" else d(a), "closed": d(b),
+                           "origin": None if via == "legacy" else origin, "via": via}
+                          for i, (st, old, a, b) in enumerate(vs, 1)],
+             "mergedFrom": [], "weak": weak}
+        if fid in DUP_OF:
+            f["dup_of"] = DUP_OF[fid]
+        facts.append(f)
+    for fid, text, ents, cat, rec, to in ENDED:
+        facts.append({"id": fid, "text": text, "ents": ents, "cat": cat, "origin": "said", "trust": .5,
+                      "trust_level": "normal", "status": "ended", "from": d(rec), "to": d(to), "to_exact": True,
+                      "rec": d(rec), "first": d(rec), "via": "tool", "chat": "dm", "by": "Alena", "conf": [],
+                      "recalls": None, "helpful": None, "last": None,
+                      "versions": [{"seq": 1, "status": "ended", "text": text, "from": d(rec), "to": d(to),
+                                    "to_exact": True, "rec": d(rec), "closed": d(to), "origin": "said",
+                                    "via": "tool"}],
+                      "mergedFrom": [], "weak": []})
+    facts.sort(key=lambda f: f["id"])
+    merges = [{"from": 29, "into": 1, "d": d(7), "prop": "D-15", "text": "Varya is in 1B at Lyceum No. 3."}]
+    facts[0]["mergedFrom"] = [{"id": 29, "text": merges[0]["text"], "d": d(7), "prop": "D-15"}]
+    count: dict = {}
+    for f in facts:
+        for e in f["ents"]:
+            count[e] = count.get(e, 0) + 1
+    ents = [{"id": eid, "name": name, "type": None, "declared": eid not in PROVISIONAL, "aliases": aliases,
+             "text_aliases": [], "standing": "provisional" if eid in PROVISIONAL else "established",
+             "stale": False, "since": d(PROVISIONAL.get(eid, 300)), "facts": count.get(eid, 0)}
+            for eid, name, aliases in FAMILY_ENT]
+    conflicts = [{"id": "C1", "a": 4, "b": 5, "score": 0.82, "shared": [3, 13]},
+                 {"id": "C2", "a": 8, "b": 9, "score": 0.64, "shared": [2]}]
+    pending = [{"kind": "conflict", "id": c["id"], "a": c["a"], "b": c["b"], "status": "open"} for c in conflicts] + [
+        {"kind": "merge", "id": "D-17", "keep": 1, "copy": 28, "covered": True, "extra": [], "created": d(3),
+         "asked": d(2), "status": "open", "current": True},
+        {"kind": "merge", "id": "D-18", "keep": 18, "copy": 39, "covered": False, "extra": ["only"],
+         "created": d(3), "asked": None, "status": "open", "current": True},
+        {"kind": "memory_conflict", "id": "M-1", "fact": 11, "entry": "Dmitry wants reminders from 8 am.",
+         "fact_numbers": ["9"], "memory_numbers": ["8"], "asked": d(1), "status": "open"},
+        {"kind": "relevant", "id": "R-7", "text": "Remind Dmitry to water the flowers on Fridays.",
+         "last_mention_days": 61, "asked": d(4), "status": "open"},
+        {"kind": "queue", "id": "Q", "records": 2, "writes": 2, "unreadable": 0, "oldest": d(9), "status": "open"},
+    ]
+
+    def night(days, alerts, stats):
+        at = (now - timedelta(days=days)).replace(hour=3, minute=5, second=0).isoformat()
+        return {"d": d(days), "k": "night", "at": at, "alerts": alerts, "stats": stats}
+
+    feed = [night(1, [], {"messages_read": 212, "days": 14, "candidates": 2}),
+            night(2, ["messages_unavailable"], {"messages_read": 0}),
+            {"d": d(3), "k": "new", "f": 33}, {"d": d(4), "k": "conf", "f": 11, "by": "Dmitry"},
+            {"d": d(4), "k": "new", "f": 36}, {"d": d(4), "k": "new", "f": 28},
+            {"d": d(5), "k": "del", "id": 41}, {"d": d(5), "k": "end", "f": 23}, {"d": d(5), "k": "new", "f": 34},
+            {"d": d(6), "k": "new", "f": 9}, {"d": d(7), "k": "mrg", "from": 29, "into": 1},
+            {"d": d(7), "k": "new", "f": 22}]
+    tombs = [{"id": 41, "d": d(5)}, {"id": 37, "d": d(57)}]
+    hidden = [{"id": 38, "d": d(12), "why": "credential", "status": "current"}]
+    current = [f for f in facts if f["status"] == "current"]
+    snap = {"made": now.isoformat(), "tz": "%+03d:00" % offset_h, "store": "memory_store.db",
+            "schema": {"store": "2", "history": "1", "entity_rules": "4", "experience": None},
+            "counts": {"current": len(current), "ended": len(facts) - len(current), "merged": len(merges),
+                       "forgotten": len(tombs), "corrected": 1, "hidden": len(hidden), "entities": len(ents),
+                       "provisional": len(PROVISIONAL),
+                       "legacy": sum(1 for f in current if f["via"] == "legacy" and f["origin"] == "unknown")},
+            "week_from": d(7), "excluded": [{"what": "hidden_by_screen", "count": len(hidden)}],
+            "experience": {"included": False},
+            "dreaming": {"read": True, "reason": None, "files": {"proposals": "ok", "report": "ok", "queue": "ok"}}}
+    return {"schema_version": 1, "SNAP": snap, "ENT": ents, "FACTS": facts, "CONFLICTS": conflicts,
+            "PENDING": pending, "TOMBS": tombs, "MERGES": merges, "HIDDEN": hidden, "FEED": feed, "ATTEMPTS": []}
 
 
 def build_home(home: Path) -> None:
@@ -226,6 +372,14 @@ def build_home(home: Path) -> None:
     db.executemany("INSERT INTO messages(session_id, role, tool_name, timestamp) VALUES (?,?,?,?)", msgs)
     db.commit()
     db.close()
+
+    # the memory map tab runs the plugin's exporter; this stand-in prints the invented family
+    exporter = home / "demo-memory-map"
+    exporter.mkdir(exist_ok=True)
+    snapshot = json.dumps(demo_memory_map(DASHBOARD_JSON["timezone"]["offset_hours"]))
+    (exporter / "memory_map.py").write_text(
+        "# demo stand-in for the holographic plugin's memory_map.py: prints a fixed snapshot\n"
+        "import sys\nsys.stdout.write(%r)\n" % snapshot, encoding="utf-8")
 
     mem = sqlite3.connect(home / "memory_store.db")
     mem.execute("CREATE TABLE facts(id INTEGER PRIMARY KEY, text TEXT)")

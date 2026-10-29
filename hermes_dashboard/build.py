@@ -17,8 +17,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import (gen_banner, gen_connectors, gen_cron, gen_events, gen_security, gen_usage,
-               history, render, sysinfo)
+from . import (gen_banner, gen_connectors, gen_cron, gen_events, gen_memory_map, gen_security,
+               gen_usage, history, render, sysinfo)
 from .common import (active, atomic_write, deliberate_paid, esc, fallback, fmt_tok, home,
                      paid, primary_id, primary_model, read_text_safe, scalar, yaml_get)
 from .config import Config, child_environment, load_budgets_env, load_config, set_current
@@ -225,6 +225,9 @@ def view_cost(cfg: Config, usage: str, analytics: str) -> str:
 
 def view_memory(cfg: Config, k: dict, m: dict, deltas: dict, host: dict) -> str:
     facts = s(k["FACTS"])
+    # only with the tab on: off, this view is byte-for-byte what it was
+    map_link = (f'<div class="sec"><a class="chip" href="#mmap">{_("What exactly the agent remembers — the memory map")} →</a></div>'
+                if cfg.get("views.memory_map", False) else "")
     growth = deltas.get("facts") or f'<span style="color:var(--ink3);font-size:13px">{_("history is accumulating")}</span>'
     backup = cfg.get("memory.backup_branch", "")
     meta = f'{_("limits from")} <b>config.yaml</b>' + (f' · {_("backup to branch")} <b>{esc(backup)}</b> {_("daily at")} {esc(host["sync_at"])}' if backup else "")
@@ -240,7 +243,7 @@ def view_memory(cfg: Config, k: dict, m: dict, deltas: dict, host: dict) -> str:
         f'<div class="kpi {cls_pct(m["USERPCT"])}"><div class="l">USER.md · runtime</div><div class="v">{pct_txt(m["USERPCT"])}</div><div class="x">{limit_txt(m["USERCH"], m["USERLIM"])} · bounded</div></div>'
         f'<div class="kpi"><div class="l">{_("Memory calls · 30d")}</div><div class="v">{s(k["MEMCALLS"])}</div><div class="x">memory tool · {_("read+write")}</div></div>'
         f'<div class="kpi"><div class="l">{_("Transcripts")}</div><div class="v">{s(k["MSGS"])}</div><div class="x">state.db · {_("short-term memory")}</div></div>'
-        '</div>'
+        '</div>' + map_link
         + memory_flow_svg(facts, s(k["MSGS"]), pct_txt(m["MEMPCT"]))
         + f'<div class="printonly">{_("system dashboard")} · {_("Memory")}</div></section>'
     )
@@ -388,6 +391,11 @@ def _build_pages(cfg: Config, only_lang: str | None, out_dir: Path) -> list[Path
     every = _safe("cron-freq", lambda: sysinfo.cron_every_minutes("hermes-dashboard")
                   or sysinfo.cron_every_minutes("dashboard-gen"), 0)
     skills = _safe("skills", gen_connectors.our_skill_names, [])
+    # The memory map runs the plugin's exporter once per build (it is the same in
+    # every language) and only when the tab is on: off, nothing is spawned.
+    mmap_on = bool(cfg.get("views.memory_map", False))
+    mmap, mmap_err = (_safe("memory-map", lambda: gen_memory_map.load(cfg), (None, None))
+                      if mmap_on else (None, None))
     written: list[Path] = []
     for lang in cfg.languages:
         if only_lang and lang != only_lang:
@@ -418,12 +426,15 @@ def _build_pages(cfg: Config, only_lang: str | None, out_dir: Path) -> list[Path
                 + _safe("overview", lambda: view_overview(cfg, k, deltas, host, lang))
                 + _safe("cost", lambda: view_cost(cfg, usage, analytics))
                 + _safe("memory-view", lambda: view_memory(cfg, k, m, deltas, host))
+                + (_safe("memory-map-view", lambda: gen_memory_map.view(cfg, mmap, mmap_err, every),
+                         gen_memory_map.unavailable(cfg, None)) if mmap_on else "")
                 + _safe("cron", lambda: view_cron(cfg, _safe("cron-chart", gen_cron.build), host))
                 + (_safe("config-map", lambda: config_map_html(cfg, lang))
                    if cfg.get("views.config_map", True) else "")
                 + f'<footer><span>{_("Private dashboard")} · {_("generated")} {esc(host["now"])}</span>'
                 + f'<span>{esc(cfg.get("agent.config_repo_label", "")) or "hermes-dashboard"}</span></footer>'
-                + '</div></main>' + render.bottom_tabs(cfg, lang, "over") + render.script() + '</body></html>')
+                + '</div></main>' + render.bottom_tabs(cfg, lang, "over") + render.script()
+                + (gen_memory_map.script() if mmap_on else "") + '</body></html>')
         target = out_dir / render.page_name(lang, cfg)
         _atomic_write(target, page)
         written.append(target)

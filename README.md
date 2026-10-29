@@ -33,6 +33,7 @@ exactly the same code as production. Nothing in it is real.
 | **Overview** | gateway / uptime / load / disk / RAM, sessions and fallback KPIs with week-over-week deltas, the routing chain with the *live* active step, a curated event feed, security tiles (scanner fail-open, watchdog status, rules-file date, evals count) |
 | **Cost** | primary-model card (weekly budget bar, cache hit rate, reasoning share, session sources), live subscription quota, one card per **paid** provider with money in three layers of certainty, free tiers, OAuth connectors, auxiliary providers — then analytics: economics, routing health, tokens by day (stacked), activity, top tools, requests by chat |
 | **Memory** | durable facts and their growth, bounded files against their limits, memory-tool calls, transcript count, the memory pipeline diagram |
+| **Memory map** | *off by default* (`views.memory_map`): what the agent actually remembers, from the holographic plugin's read-only export — overview with what waits for your decision, people and topics, a card per name and per fact (source, trust in words, versions), contradictions, weak basis, the week, removed and closed (a forgotten fact is only its number and date), about the snapshot |
 | **Automation** | day timeline of every cron job (agent cron + system crontab), no-op economy, jobs grouped by billing tier, per-job token telemetry |
 | **Config** | live config map: engine defaults ↔ effective `config.yaml` ↔ a git truth ref, with a **drift** column and hand-written descriptions |
 | **Capability map** | separate page: MCP connectors, channels, plugins, model chain, web access, custom skills, bundled packs — read from the real config |
@@ -95,6 +96,7 @@ the page builds, and stderr says why.
 | **Config** view (engine defaults ↔ effective ↔ truth ref) | `paths.venv_python` = the agent's venv (imports the core's `DEFAULT_CONFIG` and PyYAML), the agent checkout at `$HERMES_HOME/hermes-agent`, and `git` for `config_map.truth_ref` (drift against `origin/main` needs a remote). `paths.node` is optional and only runs a self-check of the view's inline script. |
 | **Subscription quota** card | `paths.venv_python` again (the collector calls the core's `account_usage` API for `providers.primary.id`) and `providers.primary.quota_cache` set. |
 | **Real $ on a paid-provider card** | an Anthropic admin key in `HERMES_DASHBOARD_ANTHROPIC_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` (env or `.env`), **or** a Cost Report CSV in `cache/` (upload it from the settings page). Other providers stay on the estimate. |
+| **Memory map** tab | the holographic memory plugin with its `memory_map.py` exporter at `memory_map.plugin_dir`, and `views.memory_map: true`. The exporter runs in its own process with a timeout; the plugin decides what may be shown, the tab only draws it. A failed export leaves the tab saying so, never numbers. |
 | **Config descriptions** (the prose column of the Config view) | a hand-written JSON per language at `paths.config_descriptions.<lang>` — format in `examples/config-descriptions.en.json`. |
 | **Week-over-week deltas** | nothing, but they need history: the build appends one row per day to `paths.history_csv`, so deltas appear after the first week. |
 
@@ -105,6 +107,7 @@ the page builds, and stderr says why.
 | tokens, cost, sessions, providers, chats | `state.db` → `sessions` |
 | tool calls, memory-tool usage, OAuth connectors | `state.db` → `messages.tool_name` |
 | durable fact count | `memory_store.db` → `facts` |
+| memory map (when on) | the holographic plugin's `memory_map.py --json` over one store (+ the nightly review's files about that store) |
 | bounded memory fill | `memories/*.md` against the limits in `config.yaml` |
 | cron timeline, job status, watchdogs, no-op economy | `cron/jobs.json` + `crontab -l` |
 | model chain, vision/STT/TTS, MCP servers, plugins, channels | `config.yaml` (+ `.env` **variable names** only — values are never read) |
@@ -133,7 +136,8 @@ the settings page.
 | `security` | rules file, evals file, bullets per language, scanner regex, alert channel label |
 | `memory` | bounded file paths, limit fallbacks, backup branch label |
 | `connectors` | per-key descriptions and curated extra cards for the capability map |
-| `views` | whether to build the config map and the capability map at all; `web_fonts` (default on) toggles the Google Fonts link |
+| `views` | whether to build the config map and the capability map at all, `memory_map` (default off) for the memory map tab; `web_fonts` (default on) toggles the Google Fonts link |
+| `memory_map` | `plugin_dir` (the folder with `memory_map.py`), `store`, `python`, `timeout_s`, `dreaming` (read the nightly review's questions about this store) |
 
 ## Settings page
 

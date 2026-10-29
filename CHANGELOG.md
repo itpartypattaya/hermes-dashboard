@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+**Memory map tab** (off by default, `views.memory_map`). What the agent actually
+remembers, for a person to read: an overview with what waits for a decision and
+five counters in words, people and topics, a card per name and per fact (who
+stands behind it, trust as weak / normal / strong, versions — a corrected one
+without its text), contradictions, facts on a weak basis, the week, removed and
+closed (a forgotten fact is its number and date, nothing else), and what the
+snapshot does and does not contain.
+
+The data is not read by the dashboard: the holographic memory plugin exports
+one store as JSON (`memory_map.py --json`) and applies every privacy rule
+itself; `gen_memory_map.py` runs it in a separate process with a timeout
+(`memory_map.plugin_dir`, `store`, `python`, `timeout_s`, `dreaming`) and only
+draws it, escaping every string — memory text comes from chat messages. A
+failed export (crash, not JSON, unknown format, hang, missing plugin or store)
+makes the tab say it is unavailable and logs `[section] memory-map failed`; the
+rest of the build is unaffected. Off, the pages are byte-for-byte what they
+were and nothing is spawned. The demo (`tools/make_demo.py`) shows an invented
+family.
+
+Tests: 67 → 73.
+
+
 ## v0.7.2 — 2026-08-31
 
 **A rejected primary credential is now announced.** It was the one failure the
