@@ -959,11 +959,19 @@ def panel_about(c: _Ctx, every: int) -> str:
 
 # ── the view ──────────────────────────────────────────────────────────
 
+# The "experimental" label beside the tab's title: shown also when the export failed, so it is not in memory-map.css
+# (inlined only with a map), and not in style.css, so a dashboard with the tab off stays byte-identical (Codex review)
+_LABEL_CSS = ("<style>.vh h1 .exp{display:inline-block;vertical-align:middle;margin-left:6px;font-family:var(--f-num);"
+              "font-size:9.5px;font-weight:400;letter-spacing:.14em;text-transform:uppercase;line-height:1.5;"
+              "color:var(--ink2);border:1px solid var(--amber);border-radius:999px;padding:1px 8px;"
+              "white-space:nowrap}</style>")
+
+
 def _style() -> str:
     try:
-        return "<style>" + (ASSETS / "memory-map.css").read_text(encoding="utf-8") + "</style>"
+        return "<style>" + (ASSETS / "memory-map.css").read_text(encoding="utf-8") + "</style>" + _LABEL_CSS
     except OSError:
-        return ""
+        return _LABEL_CSS
 
 
 def _head(cfg: Config, made: str = "") -> str:
@@ -987,7 +995,7 @@ def unavailable(cfg: Config, err: MapUnavailable | None) -> str:
            "exit": _("the export failed (exit code {n})").format(n=esc(err.value) if err else "?"),
            "not_json": _("the export printed something that is not JSON"),
            "schema": _("the snapshot has a format this dashboard does not know")}.get(code, _("the view could not be drawn"))
-    return (f'<section class="view" id="v-mmap">{_head(cfg)}'
+    return (f'<section class="view" id="v-mmap">{_LABEL_CSS}{_head(cfg)}'
             f'<div class="card"><h3>{_("Memory map unavailable")}</h3>'
             f'<p class="mm-small" style="margin:0">{esc(why)}. {_("Nothing is shown rather than numbers that could be wrong; the dashboard log has the details.")}</p></div>'
             f'<div class="printonly">{_("system dashboard")} · {_("Memory map")}</div></section>')

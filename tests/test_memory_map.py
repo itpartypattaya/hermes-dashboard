@@ -138,7 +138,9 @@ class MemoryMapTests(unittest.TestCase):
         pages, _err = build_pages(home, {"memory_map": {"plugin_dir": "plug"}})
         self.assertFalse(marker.exists(), "the exporter ran although the tab is off")
         for name, html in pages.items():
-            for needle in ("v-mmap", "mmap", "mm-pg", "Memory map", "Карта памяти"):
+            # "h1 .exp": the tab's own CSS, even a rule shared pages could carry, stays out (Codex review: the
+            # experimental-label rule sat in style.css, so every page changed with the tab off)
+            for needle in ("v-mmap", "mmap", "mm-pg", "Memory map", "Карта памяти", "h1 .exp"):
                 self.assertNotIn(needle, html, f"{needle!r} in {name} with the tab off")
 
     def test_on_the_tab_is_in_both_navigations_and_linked_from_memory(self):
@@ -172,6 +174,7 @@ class MemoryMapTests(unittest.TestCase):
                     h1 = re.search(r"<h1>(.*?)</h1>", html[html.index('id="v-mmap"'):]).group(1)
                     self.assertIn('class="exp"', h1)
                     self.assertIn(f">{word}<", h1)
+                    self.assertIn(".vh h1 .exp{", html, "the label is drawn as a label, not as plain text")
         i18n.set_lang("en")
 
     def test_night_records_the_export_left_out_are_said_not_hidden(self):

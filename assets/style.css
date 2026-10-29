@@ -214,9 +214,6 @@ body.lit .tilebase>.glow,body.lit .tilebase>.rim{opacity:1}
   color:var(--lime);margin-bottom:12px}
 .vh h1{font-family:var(--f-dis);font-size:26px;font-weight:700;color:var(--ink);margin:0;
   letter-spacing:-.045em;line-height:1.04}
-.vh h1 .exp{display:inline-block;vertical-align:middle;margin-left:6px;font-family:var(--f-num);font-size:9.5px;
-  font-weight:400;letter-spacing:.14em;text-transform:uppercase;line-height:1.5;color:var(--ink2);
-  border:1px solid var(--amber);border-radius:999px;padding:1px 8px;white-space:nowrap}
 .vh p{font-size:13px;color:var(--ink3);margin:12px 0 0;max-width:640px}
 .vh .meta{font-family:var(--f-num);font-size:10px;color:var(--ink3);margin-top:12px}
 .vh .meta b{color:var(--ink2);font-weight:400}
