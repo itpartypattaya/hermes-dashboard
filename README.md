@@ -243,7 +243,38 @@ HERMES_DASHBOARD_SCAN_EXTRA="my-host,my-repo,@myhandle" bin/hermes-dashboard che
 
 The **Memory map** tab is new and experimental: what it shows, its wording and the
 export format behind it may change between releases. It is off unless
-`views.memory_map` is `true`. Before you turn it on:
+`views.memory_map` is `true`. Read the risks below first.
+
+### Turning it on
+
+1. Install the holographic memory plugin with `memory_map.py` (its memory-map release or later) in the agent:
+   `hermes plugins install holographic`. The dashboard does not copy or import it; it runs the plugin's exporter.
+2. In `dashboard.json` set the view and say where the plugin and the store are (paths relative to the agent home):
+
+   ```json
+   "views": { "memory_map": true },
+   "memory_map": {
+     "plugin_dir": "plugins/holographic",
+     "store": "memory_store.db",
+     "python": "",
+     "timeout_s": 60,
+     "dreaming": true
+   }
+   ```
+
+   `store` is one file: the profile's `memory_store.db`, or one scope's `.db` for a map of one user or chat (scopes
+   are never mixed). `python` empty uses `paths.venv_python`. `dreaming` adds what the nightly review
+   ([hermes-dreaming](https://github.com/itpartypattaya/hermes-dreaming)) asks about this store.
+3. Build once by hand (`bin/hermes-dashboard build --config <your dashboard.json>`) and open the **Memory map** tab.
+   "Memory map unavailable" names the reason (no plugin, no store, an exporter without `--config`, a timeout); the
+   build log has `[section] memory-map failed: …`.
+4. Check the page is behind the password: a request without credentials must get `401`
+   (`curl -s -o /dev/null -w "%{http_code}" https://your-host/`). The cron entry of `examples/crontab` rebuilds it with
+   the other pages.
+
+To try the tab without an agent, `python tools/make_demo.py /tmp/demo` builds the demo site (an invented family) with it on.
+
+### Before you turn it on
 
 * **It shows personal data.** Unlike the rest of the dashboard (aggregates), the tab
   holds the texts of what the agent remembers — names, family, plans, habits — in the
