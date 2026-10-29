@@ -247,7 +247,7 @@ export format behind it may change between releases. It is off unless
 
 ### Turning it on
 
-1. Install the holographic memory plugin with `memory_map.py` (its memory-map release or later) in the agent:
+1. Install the holographic memory plugin 0.24.0 or later (it has `memory_map.py`) in the agent:
    `hermes plugins install holographic`. The dashboard does not copy or import it; it runs the plugin's exporter.
 2. In `dashboard.json` set the view and say where the plugin and the store are (paths relative to the agent home):
 
@@ -281,12 +281,24 @@ To try the tab without an agent, `python tools/make_demo.py /tmp/demo` builds th
   generated HTML. Serve it **only behind basic-auth over TLS** (`examples/nginx.conf`);
   never on a public URL, never in a repository, never forwarded. A copy someone saved or
   forwarded is not reached by a later «forget»: deleting it is up to them.
+* **Every local account on the server can read it unless you close the folder.** Basic-auth
+  guards the web only. Pages are written readable by all (0644), so on a shared host (a
+  hosting panel, other sites' PHP) any local user reaches them when every folder from `/`
+  to `out_dir` lets others in. With the tab on, the build log says so
+  (`[section] memory-map: every local user can read the pages…`). Close the folder to all
+  but the web server's group, keeping the group for new files:
+  `sudo chgrp www-data <out_dir> && sudo chmod 2750 <out_dir>` (the user that builds keeps
+  writing as owner; use your web server's group if it is not `www-data`).
+* **The exporter gets no credentials.** It runs with the agent home and the dashboard's
+  environment minus anything shaped like a secret, and minus the Anthropic admin key the
+  usage collector reads. A failure line in the build log names the error's kind, never its
+  message (a message could quote a stored text). On Linux a timeout stops the exporter's
+  whole process group, so a wrapper in `memory_map.python` does not leave it running.
 * **It is a snapshot from the last build.** The tab is regenerated with the rest of the
   pages by cron (`examples/crontab`: every 30 minutes), so it can be up to that old: a
   fact forgotten a minute ago can still show its text until the next build.
 * **It needs a holographic plugin with `memory_map.py` and its `--config` option** —
-  the plugin's memory-map release, not out yet at the time of writing (its CHANGELOG,
-  "Unreleased"; the first release after 0.23.0). The dashboard passes `--config
+  holographic 0.24.0 or later. The dashboard passes `--config
   <home>/config.yaml` whenever that file exists, and an exporter without the option
   exits with an error: the tab then says "Memory map unavailable" and the build log
   gets `[section] memory-map failed`.
@@ -300,6 +312,9 @@ To try the tab without an agent, `python tools/make_demo.py /tmp/demo` builds th
   on" holds only for a question that fits both facts equally and says nothing with the
   reranker on; contradictions are the plugin's heuristic. There is no usage journal yet.
   The plugin's `docs/memory-map.md` lists all of its limits.
+* **The whole map is inside `index.html`.** Every visit to any tab downloads it: about
+  50 KB of export for 40 facts, but on a test store of 10,000 facts and 1,000 names the
+  page grew to about 26 MB and took 8 s to draw per language. There is no cap yet.
 * **A build waits for the export** (`memory_map.timeout_s`, 60 s by default). On a
   store in rollback-journal mode the agent's writes wait while it reads (under a second
   on a 3,000-fact test store).

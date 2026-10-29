@@ -179,7 +179,7 @@ _SECRET_ENV_RE = re.compile(
 _CHILD_ENV_KEEP = ("HERMES_DASHBOARD_ANTHROPIC_ADMIN_KEY", "ANTHROPIC_ADMIN_KEY")
 
 
-def child_environment(home: Path, extra: dict | None = None) -> dict:
+def child_environment(home: Path, extra: dict | None = None, credentials: bool = True) -> dict:
     """Environment for a process the dashboard spawns, minus other people's secrets.
 
     This is a *denylist*, deliberately, and the choice is worth explaining. A
@@ -193,10 +193,12 @@ def child_environment(home: Path, extra: dict | None = None) -> dict:
     our own code, and the point is only to shrink what it could ever spill.
 
     So: keep the environment, drop what is shaped like a credential, then put
-    back the one credential our own collector documents that it reads.
+    back the one credential our own collector documents that it reads — unless
+    `credentials` is false: a child that is not our collector (the memory
+    plugin's exporter) gets none.
     """
     keep = {k: v for k, v in os.environ.items() if not _SECRET_ENV_RE.search(k)}
-    for name in _CHILD_ENV_KEEP:
+    for name in _CHILD_ENV_KEEP if credentials else ():
         if name in os.environ:
             keep[name] = os.environ[name]
     keep["HERMES_HOME"] = str(home)

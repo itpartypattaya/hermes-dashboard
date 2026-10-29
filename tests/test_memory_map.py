@@ -19,12 +19,15 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -85,6 +88,7 @@ def panel(html: str, key: str) -> str:
 
 def new_home() -> Path:
     home = Path(tempfile.mkdtemp(prefix="hd-mm-"))
+    _HOMES.append(home)
     (home / "memory_store.db").write_bytes(b"")   # the exporter is fake; only its presence is checked
     return home
 
@@ -105,17 +109,94 @@ def build_pages(home: Path, data: dict) -> tuple[dict[str, str], str]:
     data = dict({"i18n": {"default": "en", "languages": ["en", "ru"]}, "views": {"config_map": False}}, **data)
     cfgp.write_text(json.dumps(data), encoding="utf-8")
     out = home / "public"
-    env = dict(os.environ, HERMES_HOME=str(home), PYTHONPATH=str(ROOT))
+    # the build's stderr carries the exporter's, in any encoding: read it as UTF-8 with replacements, as a log would
+    env = dict(os.environ, HERMES_HOME=str(home), PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8")
     r = subprocess.run([sys.executable, "-m", "hermes_dashboard.build", "--config", str(cfgp), "--out", str(out)],
-                       env=env, capture_output=True, text=True, encoding="utf-8", timeout=180)
+                       env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
     if r.returncode != 0:
         raise AssertionError("build failed: " + r.stderr[-2000:])
     return {p.name: p.read_text(encoding="utf-8") for p in out.glob("*.html")}, r.stderr
 
 
+_HOMES: list[Path] = []
+
+
+def tearDownModule():
+    for home in _HOMES:   # every build leaves a home and its public/ behind otherwise
+        shutil.rmtree(home, ignore_errors=True)
+
+
 class MemoryMapTests(unittest.TestCase):
     def tearDown(self):
         i18n.set_lang("en")
+
+    def test_the_exporter_gets_no_credentials(self):
+        """The exporter is the plugin's code, at a path the settings page can change: it gets the agent home and none
+        of the dashboard's own credentials (the Anthropic admin key the usage collector reads)."""
+        home = new_home()
+        seen = home / "env.json"
+        names = ("ANTHROPIC_ADMIN_KEY", "HERMES_DASHBOARD_ANTHROPIC_ADMIN_KEY", "HERMES_HOME")
+        fake_plugin(home, "import os\nopen(%r, 'w').write(json.dumps({k: os.environ.get(k) for k in %r}))\n"
+                    % (str(seen), names) + printing(snapshot()))
+        with mock.patch.dict(os.environ, {"ANTHROPIC_ADMIN_KEY": "sk-ant-admin01-test",
+                                          "HERMES_DASHBOARD_ANTHROPIC_ADMIN_KEY": "sk-ant-admin01-test2"}):
+            data, why = build.gen_memory_map.load(cfg_for(home))
+        self.assertIsNone(why)
+        got = json.loads(seen.read_text(encoding="utf-8"))
+        self.assertIsNone(got["ANTHROPIC_ADMIN_KEY"])
+        self.assertIsNone(got["HERMES_DASHBOARD_ANTHROPIC_ADMIN_KEY"])
+        self.assertEqual(got["HERMES_HOME"], str(home))
+
+    def test_stored_text_never_reaches_the_build_log(self):
+        """The build log is not behind the password. A record the view cannot draw, or an exporter that dies with
+        memory text in its error, leaves a failure line without that text, and the rest of the dashboard is built."""
+        secret = "Пароль от почты: hunter2"
+        cases = {
+            "a contradiction's other side is text": printing(snapshot(CONFLICTS=[{"a": 1, "b": secret}])),
+            "a pending contradiction names text": printing(snapshot(
+                PENDING=[{"kind": "conflict", "n": 1, "a": 1, "b": secret}])),
+            "the exporter dies on a stored text": "raise ValueError(%r)" % secret,
+        }
+        for label, code in cases.items():
+            with self.subTest(label):
+                home = new_home()
+                fake_plugin(home, code)
+                pages, err = build_pages(home, {"views": {"config_map": False, "memory_map": True},
+                                                "memory_map": {"plugin_dir": "plug"}})
+                self.assertNotIn("hunter2", err)
+                self.assertIn('id="v-cost"', pages["index.html"])
+                self.assertIn('id="v-mmap"', pages["index.html"])
+
+    @unittest.skipUnless(os.name == "posix", "a process group is POSIX; on Windows only the exporter itself is killed")
+    def test_a_timed_out_export_leaves_no_process_behind(self):
+        """memory_map.python may be a wrapper (uv run, a shell script) that starts the real exporter as its child:
+        a timeout stops both, so a hanging export does not pile up a process every 30 minutes."""
+        home = new_home()
+        alive = home / "alive"
+        child = "import time, pathlib; time.sleep(3); pathlib.Path(%r).write_text('x')" % str(alive)
+        fake_plugin(home, "import subprocess\nsubprocess.Popen([sys.executable, '-c', %r])\ntime.sleep(30)" % child)
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            data, why = build.gen_memory_map.load(cfg_for(home, {"memory_map": {"timeout_s": 1}}))
+        self.assertEqual(why.code, "timeout")
+        time.sleep(4)
+        self.assertFalse(alive.exists(), "the exporter's child outlived the timeout")
+
+    @unittest.skipUnless(os.name == "posix", "file modes are POSIX")
+    def test_the_build_says_when_every_local_user_can_read_the_map(self):
+        """The tab puts memory text into the pages. When every local account can reach them (each folder up to the
+        output enterable by others), the build log says so; a folder closed to others ends the warning."""
+        home = new_home()
+        fake_plugin(home, printing(snapshot()))
+        home.chmod(0o755)
+        _, err = build_pages(home, {"views": {"config_map": False, "memory_map": True},
+                                    "memory_map": {"plugin_dir": "plug"}})
+        if all(p.stat().st_mode & 0o001 for p in [home, *home.parents]):
+            self.assertIn("every local user", err)
+        home.chmod(0o750)
+        _, err = build_pages(home, {"views": {"config_map": False, "memory_map": True},
+                                    "memory_map": {"plugin_dir": "plug"}})
+        self.assertNotIn("every local user", err)
 
     def test_off_changes_nothing_and_runs_nothing(self):
         """Off (the default, or said so) — the same sidebar, tabs and Memory view, and the exporter never runs,

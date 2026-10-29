@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import re
+import signal
 import subprocess
 import sys
 from datetime import date, datetime
@@ -84,25 +87,60 @@ def command(cfg: Config) -> list[str]:
     return cmd
 
 
+def _run(cmd: list[str], env: dict, timeout: float) -> tuple[int, bytes, bytes]:
+    """(returncode, stdout, stderr). On POSIX the exporter gets a process group of its own, so a timeout stops
+    what a wrapper in memory_map.python (uv run, a shell script) started too, not only the wrapper."""
+    posix = os.name == "posix"
+    with subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          start_new_session=posix) as p:
+        try:
+            out, err = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if posix:
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except OSError:
+                    p.kill()
+            else:
+                p.kill()
+            p.communicate()
+            raise
+    return p.returncode, out, err
+
+
+_ERROR_NAME = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt))\b")
+
+
+def _stderr_kind(err: bytes) -> str:
+    """What the build log may say about a failed export: the error's class, never its message. A message can
+    hold a stored text (a ValueError raised on a value read from the store), and the log is not behind the
+    password."""
+    lines = [ln.strip() for ln in err.decode("utf-8", "replace").splitlines() if ln.strip()]
+    m = _ERROR_NAME.match(lines[-1]) if lines else None
+    if m:
+        return m.group(1)
+    if lines and lines[-1].startswith("memory_map:"):
+        return "memory_map error"
+    return f"stderr {len(err)} bytes"
+
+
 def collect(cfg: Config) -> dict:
     """Run the exporter and return its snapshot, or raise MapUnavailable."""
     timeout = cfg.number("memory_map.timeout_s", 60, float)
     cmd = command(cfg)
     try:
-        r = subprocess.run(cmd, env=child_environment(cfg.home), capture_output=True, timeout=timeout)
+        # The exporter is the plugin's code: it gets the agent home, not the dashboard's own credentials.
+        rc, out, err = _run(cmd, child_environment(cfg.home, credentials=False), timeout)
     except subprocess.TimeoutExpired:
         raise MapUnavailable("timeout", f"after {timeout:g} s", timeout) from None
     except OSError as e:
-        raise MapUnavailable("not_run", str(e)) from None
-    if r.returncode != 0:
-        # The exporter prints only the kind of a database error, never a stored
-        # value; the tail goes to the build log, not to the page.
-        tail = r.stderr.decode("utf-8", "replace").strip()[-300:]
-        raise MapUnavailable("exit", f"rc={r.returncode} {tail}", r.returncode)
+        raise MapUnavailable("not_run", type(e).__name__) from None
+    if rc != 0:
+        raise MapUnavailable("exit", f"rc={rc} {_stderr_kind(err)}", rc)
     try:
-        data = json.loads(r.stdout.decode("utf-8"))
+        data = json.loads(out.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
-        raise MapUnavailable("not_json", f"{len(r.stdout)} bytes") from None
+        raise MapUnavailable("not_json", f"{len(out)} bytes") from None
     if not isinstance(data, dict) or data.get("schema_version") not in SUPPORTED_SCHEMAS:
         got = data.get("schema_version") if isinstance(data, dict) else type(data).__name__
         raise MapUnavailable("schema", f"schema_version {got!r}")
@@ -259,7 +297,9 @@ def alert_label(kind) -> str:
 # ── pieces ────────────────────────────────────────────────────────────
 
 def fref(fid) -> str:
-    return f'<a class="mm-fid" href="#mmap/f{int(fid)}">№{int(fid)}</a>'
+    """A link to a fact by its number; a value that is not one shows as an unknown number, never as its text."""
+    n = _int(fid)
+    return f'<a class="mm-fid" href="#mmap/f{n}">№{n}</a>' if n is not None else "№?"
 
 
 def origin_chip(o) -> str:
@@ -1051,7 +1091,14 @@ MM_JS = r"""
   }
   function route(){
     var h = (location.hash || "").replace("#", "");
-    if(h !== "mmap" && h.indexOf("mmap/") !== 0) return false;
+    if(h !== "mmap" && h.indexOf("mmap/") !== 0){
+      // "Back" from the map to another view: the base script reads the hash only on load, so switch here
+      if(root.classList.contains("on") && /^[a-z]+$/.test(h) && document.getElementById("v-" + h)){
+        [].slice.call(document.querySelectorAll(".view")).forEach(function(v){ v.classList.toggle("on", v.id === "v-" + h); });
+        [].slice.call(document.querySelectorAll("[data-v]")).forEach(function(b){ b.classList.toggle("on", b.getAttribute("data-v") === h); });
+      }
+      return false;
+    }
     [].slice.call(document.querySelectorAll(".view")).forEach(function(v){ v.classList.toggle("on", v.id === "v-mmap"); });
     [].slice.call(document.querySelectorAll("[data-v]")).forEach(function(b){ b.classList.toggle("on", b.getAttribute("data-v") === "mmap"); });
     open(h.slice(5) || "home");

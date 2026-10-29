@@ -345,7 +345,7 @@ def _warn_primary_mismatch(cfg: Config) -> None:
               % (declared, running), file=sys.stderr)
 
 
-def _safe(name: str, fn, fallback_html: str = "") -> str:
+def _safe(name: str, fn, fallback_html: str = "", detail: bool = True) -> str:
     """Run a section generator; a crash costs that section, not the page.
 
     The promise in the README is that a failed generator shows up in the log
@@ -356,8 +356,26 @@ def _safe(name: str, fn, fallback_html: str = "") -> str:
     try:
         return fn()
     except Exception as e:                       # noqa: BLE001 — deliberately broad
-        print("[section] %s failed: %s: %s" % (name, type(e).__name__, e), file=sys.stderr)
+        # detail=False for a section that draws memory text: an error message can quote it, the log is not private
+        print("[section] %s failed: %s%s" % (name, type(e).__name__, (": %s" % (e,)) if detail else ""),
+              file=sys.stderr)
         return fallback_html
+
+
+def _warn_if_open_to_all(out_dir: Path) -> None:
+    """With the memory map on, the pages hold memory text. Basic-auth guards the web; on a shared host any
+    local account (another site's PHP, a panel user) reads a page it can reach: every folder from / to the
+    output enterable by others, and the page readable by them (pages are written 0644). Say so; the fix is
+    the operator's (README: the output folder in the web server's group, mode 2750)."""
+    if os.name != "posix":
+        return
+    try:
+        out = Path(out_dir).resolve()
+        if all(p.stat().st_mode & 0o001 for p in (out, *out.parents)):
+            print("[section] memory-map: every local user can read the pages in %s (each folder up to it is "
+                  "open to others); see README, \"Before you turn it on\"" % out, file=sys.stderr)
+    except OSError:
+        pass
 
 
 # ── main ──────────────────────────────────────────────────────────────
@@ -394,8 +412,10 @@ def _build_pages(cfg: Config, only_lang: str | None, out_dir: Path) -> list[Path
     # The memory map runs the plugin's exporter once per build (it is the same in
     # every language) and only when the tab is on: off, nothing is spawned.
     mmap_on = bool(cfg.get("views.memory_map", False))
-    mmap, mmap_err = (_safe("memory-map", lambda: gen_memory_map.load(cfg), (None, None))
+    mmap, mmap_err = (_safe("memory-map", lambda: gen_memory_map.load(cfg), (None, None), detail=False)
                       if mmap_on else (None, None))
+    if mmap_on:
+        _warn_if_open_to_all(out_dir)
     written: list[Path] = []
     for lang in cfg.languages:
         if only_lang and lang != only_lang:
@@ -427,7 +447,7 @@ def _build_pages(cfg: Config, only_lang: str | None, out_dir: Path) -> list[Path
                 + _safe("cost", lambda: view_cost(cfg, usage, analytics))
                 + _safe("memory-view", lambda: view_memory(cfg, k, m, deltas, host))
                 + (_safe("memory-map-view", lambda: gen_memory_map.view(cfg, mmap, mmap_err, every),
-                         gen_memory_map.unavailable(cfg, None)) if mmap_on else "")
+                         gen_memory_map.unavailable(cfg, None), detail=False) if mmap_on else "")
                 + _safe("cron", lambda: view_cron(cfg, _safe("cron-chart", gen_cron.build), host))
                 + (_safe("config-map", lambda: config_map_html(cfg, lang))
                    if cfg.get("views.config_map", True) else "")

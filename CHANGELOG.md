@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.8.0 — 2026-10-30
 
 **Memory map tab — experimental** (off by default, `views.memory_map`; the header
 says «experimental» / «экспериментально»). Its wording and the export format behind it may
@@ -41,7 +41,18 @@ added to the weak facts), and only the numbers a person answers in the chat
 "About the snapshot" says how many records of the nightly review's files the
 export left out for another shape (the export lists them; their contents stay out).
 
-Tests: 67 → 82.
+Review before release (30.10.2026): the exporter no longer gets the Anthropic
+admin key the usage collector reads (`child_environment(..., credentials=False)`);
+a record the tab cannot draw or an exporter that dies on a stored text leaves a
+log line with the error's kind only, never its message, and a fact number that is
+not a number is shown as `№?` instead of failing the tab; on Linux a timeout
+kills the exporter's process group (a wrapper such as `uv run` left the real
+exporter running); with the tab on, the build warns when every local user can
+read the pages and the README says how to close the folder (`chmod 2750`, the web
+server's group); the browser's Back button from the map returns to the view it
+names. Requires holographic 0.24.0 or later.
+
+Tests: 67 → 86 (two of them, the process group and the folder warning, run only on POSIX).
 
 
 ## v0.7.2 — 2026-08-31
