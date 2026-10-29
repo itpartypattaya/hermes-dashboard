@@ -925,6 +925,9 @@ def panel_about(c: _Ctx, every: int) -> str:
         night = {"not_requested": _("not read: turned off in the dashboard settings"),
                  "other_store": _("not read: the nightly review works on another store")}.get(
             dreaming.get("reason"), _("not read"))
+    left_out = dreaming.get("invalid") if isinstance(dreaming.get("invalid"), list) else []
+    if left_out:  # the export names them (file, number, field); their contents stay out of the page
+        night += "; " + pl(len(left_out), _("{n} record of another shape was left out|{n} records of another shape were left out"))
     legacy = n("legacy")
     kv = (f'<dl class="mm-kv"><dt>{_("Made")}</dt><dd>{c.d(made)} {esc(made[11:16])} ({esc(s.get("tz"))})</dd>'
           f'<dt>{_("Store")}</dt><dd>{esc(s.get("store"))}'
@@ -967,7 +970,9 @@ def _head(cfg: Config, made: str = "") -> str:
     meta = f'{_("source")} — <b>holographic · memory_map.py</b>'
     if made:
         meta += f' · {_("snapshot")} <b>{made}</b>'
-    return (f'<div class="vh"><div class="kick">{_("What the agent remembers")}</div><h1>{_("Memory map")}</h1>'
+    return (f'<div class="vh"><div class="kick">{_("What the agent remembers")}</div><h1>{_("Memory map")}'
+            f' <span class="exp" title="{_("A new feature: its format and rules may still change. The memory plugin’s docs/memory-map.md lists its limits.")}">'
+            f'{_("experimental")}</span></h1>'
             f'<p>{_("Facts with their source and trust, what contradicts itself, what stands on a weak basis, what waits for your decision and what was removed. Read-only; changes go through the chat.")}</p>'
             f'<div class="meta">{meta}</div></div>')
 

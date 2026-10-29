@@ -8,7 +8,8 @@ Requirements, in the owner's words, each a test below:
   unavailable instead of showing numbers, the log gets a "[section] memory-map failed" line, the build goes on;
 - memory text is written from chat messages, so markup in it is shown as text, never run;
 - the tab shows what the export decided (trust words, what is weak, the health category) without re-deciding;
-- the exporter is asked for the configured store, in the dashboard's zone.
+- the exporter is asked for the configured store, in the dashboard's zone;
+- the tab says it is experimental, in both languages.
 
 The snapshots below are shaped like the plugin's real output (schema_version 1, docs/memory-map.md there),
 including its dirty cases: an old record with no source, a corrected version with no text, a hidden version."""
@@ -158,6 +159,33 @@ class MemoryMapTests(unittest.TestCase):
         for name, html in pages.items():
             self.assertEqual(html.count("<div"), html.count("</div>"), f"div balance in {name}")
             self.assertEqual(html.count("<section"), html.count("</section>"), f"section balance in {name}")
+
+    def test_the_tab_says_it_is_experimental_in_both_languages(self):
+        """The map is a new, experimental feature (the plugin's docs/memory-map.md): its header says so in the
+        reader's language, next to the title, whether the export worked or not."""
+        for lang, word in (("en", "experimental"), ("ru", "экспериментально")):
+            with self.subTest(lang):
+                i18n.set_lang(lang)
+                for html in (build.gen_memory_map.view(cfg_for(new_home()), snapshot()),
+                             build.gen_memory_map.view(cfg_for(new_home()), None,
+                                                       build.gen_memory_map.MapUnavailable("exit", "rc=1", 1))):
+                    h1 = re.search(r"<h1>(.*?)</h1>", html[html.index('id="v-mmap"'):]).group(1)
+                    self.assertIn('class="exp"', h1)
+                    self.assertIn(f">{word}<", h1)
+        i18n.set_lang("en")
+
+    def test_night_records_the_export_left_out_are_said_not_hidden(self):
+        """The export leaves out a record of the night's files it cannot read and lists it (SNAP.dreaming.invalid):
+        the person sees that something was left out, without its contents."""
+        snap = snapshot()
+        snap["SNAP"]["dreaming"] = {"read": True, "reason": None, "files": {"proposals": "ok", "report": "ok",
+                                                                            "queue": "absent"},
+                                    "invalid": [{"file": "proposals", "id": "D-5", "why": "keep"},
+                                                {"file": "report", "id": "md_decays[2]", "why": "record"}]}
+        about = panel(build.gen_memory_map.view(cfg_for(new_home()), snap), "about")
+        self.assertIn("2 records of another shape were left out", about)
+        clean = panel(build.gen_memory_map.view(cfg_for(new_home()), snapshot()), "about")
+        self.assertNotIn("of another shape", clean)
 
     def test_a_broken_export_costs_only_this_tab(self):
         bad = {
