@@ -33,7 +33,7 @@ exactly the same code as production. Nothing in it is real.
 | **Overview** | gateway / uptime / load / disk / RAM, sessions and fallback KPIs with week-over-week deltas, the routing chain with the *live* active step, a curated event feed, security tiles (scanner fail-open, watchdog status, rules-file date, evals count) |
 | **Cost** | primary-model card (weekly budget bar, cache hit rate, reasoning share, session sources), live subscription quota, one card per **paid** provider with money in three layers of certainty, free tiers, OAuth connectors, auxiliary providers — then analytics: economics, routing health, tokens by day (stacked), activity, top tools, requests by chat |
 | **Memory** | durable facts and their growth, bounded files against their limits, memory-tool calls, transcript count, the memory pipeline diagram |
-| **Memory map** | *off by default* (`views.memory_map`): what the agent actually remembers, from the holographic plugin's read-only export — overview with what waits for your decision, people and topics, a card per name and per fact (source, trust in words, versions), contradictions, weak basis, the week, removed and closed (a forgotten fact is only its number and date), about the snapshot |
+| **Memory map** *(experimental)* | *off by default* (`views.memory_map`); see [Memory map (experimental)](#memory-map-experimental) for its risks: what the agent actually remembers, from the holographic plugin's read-only export — overview with what waits for your decision, people and topics, a card per name and per fact (source, trust in words, versions), contradictions, weak basis, the week, removed and closed (a forgotten fact is only its number and date), about the snapshot |
 | **Automation** | day timeline of every cron job (agent cron + system crontab), no-op economy, jobs grouped by billing tier, per-job token telemetry |
 | **Config** | live config map: engine defaults ↔ effective `config.yaml` ↔ a git truth ref, with a **drift** column and hand-written descriptions |
 | **Capability map** | separate page: MCP connectors, channels, plugins, model chain, web access, custom skills, bundled packs — read from the real config |
@@ -204,8 +204,10 @@ locale is incomplete.
 
 * Regenerate from cron (`examples/crontab`). A build takes seconds and writes atomically,
   so a reader never catches half a page.
-* The pages are private by design: `noindex`, no page runtime, no secrets — only aggregates.
-  Put them behind basic-auth over TLS anyway (`examples/nginx.conf`).
+* The pages are private by design: `noindex`, no page runtime, no secrets — only aggregates,
+  **except the memory map tab** when it is on: it shows the texts of the agent's facts about
+  people. Put the pages behind basic-auth over TLS (`examples/nginx.conf`) — with the memory
+  map on, that is a requirement, not a nicety.
 * **One external request remains by default:** the typefaces come from `fonts.googleapis.com`,
   so every view tells Google an IP and a timestamp. For a dashboard nobody should know you are
   reading, set `views.web_fonts: false` — the layout falls back to the system stack and the page
@@ -236,6 +238,40 @@ scan for classes of leaked identifiers. To check your own installation's strings
 ```bash
 HERMES_DASHBOARD_SCAN_EXTRA="my-host,my-repo,@myhandle" bin/hermes-dashboard check
 ```
+
+## Memory map (experimental)
+
+The **Memory map** tab is new and experimental: what it shows, its wording and the
+export format behind it may change between releases. It is off unless
+`views.memory_map` is `true`. Before you turn it on:
+
+* **It shows personal data.** Unlike the rest of the dashboard (aggregates), the tab
+  holds the texts of what the agent remembers — names, family, plans, habits — in the
+  generated HTML. Serve it **only behind basic-auth over TLS** (`examples/nginx.conf`);
+  never on a public URL, never in a repository, never forwarded. A copy someone saved or
+  forwarded is not reached by a later «forget»: deleting it is up to them.
+* **It is a snapshot from the last build.** The tab is regenerated with the rest of the
+  pages by cron (`examples/crontab`: every 30 minutes), so it can be up to that old: a
+  fact forgotten a minute ago can still show its text until the next build.
+* **It needs a holographic plugin with `memory_map.py` and its `--config` option** —
+  the plugin's memory-map release, not out yet at the time of writing (its CHANGELOG,
+  "Unreleased"; the first release after 0.23.0). The dashboard passes `--config
+  <home>/config.yaml` whenever that file exists, and an exporter without the option
+  exits with an error: the tab then says "Memory map unavailable" and the build log
+  gets `[section] memory-map failed`.
+* **One store, read-only.** The exporter opens one store read-only and applies every
+  privacy rule itself (a forgotten fact is its number and date, a corrected version
+  and what the safety screen hides carry no text); the tab only draws what it gets.
+  The nightly review's files are read only about that store. Records of those files in
+  a shape the exporter does not know are left out and counted on "About the snapshot".
+* **Its readings are narrow.** "Person" or "topic" comes from a short closed list of
+  words beside a name (most names stay "not determined"); "which fact the agent leans
+  on" holds only for a question that fits both facts equally and says nothing with the
+  reranker on; contradictions are the plugin's heuristic. There is no usage journal yet.
+  The plugin's `docs/memory-map.md` lists all of its limits.
+* **A build waits for the export** (`memory_map.timeout_s`, 60 s by default). On a
+  store in rollback-journal mode the agent's writes wait while it reads (under a second
+  on a 3,000-fact test store).
 
 ## Limitations
 

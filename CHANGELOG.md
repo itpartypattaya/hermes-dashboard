@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-**Memory map tab** (off by default, `views.memory_map`). What the agent actually
+**Memory map tab — experimental** (off by default, `views.memory_map`; the header
+says «experimental» / «экспериментально»). Its wording and the export format behind it may
+change. It shows personal data: serve it only behind basic-auth over TLS; it needs the
+holographic memory-map release with `memory_map.py --config` (README, "Memory map
+(experimental)", for all the risks). What the agent actually
 remembers, for a person to read: an overview with what waits for a decision and
 five counters in words, people and topics, a card per name and per fact (who
 stands behind it, trust as weak / normal / strong, versions — a corrected one
@@ -34,7 +38,10 @@ button counts what its overview tile counts (names in question are no longer
 added to the weak facts), and only the numbers a person answers in the chat
 (D-NN) are shown.
 
-Tests: 67 → 80.
+"About the snapshot" says how many records of the nightly review's files the
+export left out for another shape (the export lists them; their contents stay out).
+
+Tests: 67 → 82.
 
 
 ## v0.7.2 — 2026-08-31
