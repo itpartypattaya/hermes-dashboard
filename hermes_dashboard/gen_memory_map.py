@@ -19,6 +19,7 @@ messages, so it is escaped like any other untrusted text.
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 from datetime import date, datetime
@@ -75,6 +76,9 @@ def command(cfg: Config) -> list[str]:
     if not store.is_file():
         raise MapUnavailable("no_store", str(store))
     cmd = [_python(cfg), str(script), "--store", str(store), "--json", "--tz", _tz(cfg)]
+    settings = Path(cfg.home) / "config.yaml"
+    if settings.is_file():  # the search settings that order a contradiction's two sides
+        cmd += ["--config", str(settings)]
     if cfg.get("memory_map.dreaming", True):
         cmd += ["--hermes-home", str(cfg.home)]
     return cmd
@@ -221,6 +225,24 @@ def version_status(s) -> str:
             "corrected": _("a mistake, corrected"), "merged": _("merged")}.get(s, esc(s))
 
 
+def type_label(c, e) -> str:
+    """Why a name is listed as a person or a topic, or that nothing says which (HTML)."""
+    t, by = e.get("type"), e.get("type_by")
+    if t == "person":
+        if by == "speaker":
+            return esc(_("person: someone of this name wrote in the chat"))
+        out = esc(_("person: a word for a relative or a role stands beside the name"))
+        if _int(e.get("type_fact")) is not None:
+            out += " — " + fref(e["type_fact"])
+        return out
+    if t == "topic":
+        return esc({"digit": _("topic: the name has a digit"),
+                    "identifier": _("topic: the name is written like an identifier"),
+                    "mixed_case": _("topic: the name is written like a brand"),
+                    "acronym": _("topic: the name is an abbreviation")}.get(by, _("topic")))
+    return esc(_("not determined: nothing in memory says whether this is a person"))
+
+
 def screen_label(why) -> str:
     return {"credential": _("looks like a password or a key"), "instruction": _("an instruction to the assistant"),
             "markup": _("hidden markup")}.get(why, esc(why))
@@ -324,8 +346,9 @@ def kind_tag(p) -> str:
                   "memory_conflict": ("p-no", _("fact vs long-term memory")),
                   "relevant": ("p-avail", _("still relevant?")),
                   "queue": ("p-avail", _("waiting for approval"))}.get(k, ("tg id", str(k or "?")))
-    pid = p.get("id")
-    return f'<span class="pill {cls}">{esc(label)}{" " + esc(pid) if pid and pid != "Q" else ""}</span>'
+    # D-NN is what the person answers («yes D-12»); the export's own counters (C1, M-1, R-7) no command takes
+    pid = p.get("id") if k == "merge" else None
+    return f'<span class="pill {cls}">{esc(label)}{" " + esc(pid) if pid else ""}</span>'
 
 
 def task_title(c: _Ctx, p) -> str:
@@ -452,27 +475,29 @@ def ent_card(c: _Ctx, e) -> str:
 
 
 def _people_topics(c: _Ctx) -> tuple[list, list, list]:
-    """(people, topics, untyped). The store has no entity types yet (type is null): then one list."""
+    """(people, topics, not determined), as the export typed them; a name it could not type is not a person."""
     order = sorted(c.ents.values(), key=lambda e: (-(_int(e.get("facts")) or 0), str(e.get("name"))))
-    people = [e for e in order if e.get("type") in ("person", "pet")]
-    topics = [e for e in order if e.get("type") and e.get("type") not in ("person", "pet")]
-    return people, topics, [e for e in order if not e.get("type")]
+    people = [e for e in order if e.get("type") == "person"]
+    topics = [e for e in order if e.get("type") == "topic"]
+    return people, topics, [e for e in order if e.get("type") not in ("person", "topic")]
 
 
 def _ent_grids(c: _Ctx) -> str:
     people, topics, untyped = _people_topics(c)
+    grid = lambda es: '<div class="mm-grid">' + "".join(ent_card(c, e) for e in es) + '</div>'  # noqa: E731
     out = ""
     if people:
-        out += sec(_("People"), "", '<div class="mm-grid">' + "".join(ent_card(c, e) for e in people) + '</div>')
+        out += sec(_("People"), pl(len(people), _("{n} name|{n} names")), grid(people))
     if topics:
-        out += sec(_("Topics and projects"), "", '<div class="mm-grid">' + "".join(ent_card(c, e) for e in topics) + '</div>')
+        out += sec(_("Topics and projects"), pl(len(topics), _("{n} name|{n} names")), grid(topics))
     if untyped:
-        out += sec(_("People and topics"), _("the store does not record which name is a person"),
-                   '<div class="mm-grid">' + "".join(ent_card(c, e) for e in untyped) + '</div>')
+        out += sec(_("Not determined"), _("memory does not say whether these are people"), grid(untyped))
     return out
 
 
 def _counts(c: _Ctx) -> dict:
+    """What each overview tile counts. The tab a tile leads to shows the same number on its button: names in
+    question are not facts, so they are said apart, never added to the weak facts."""
     weak = [f for f in c.facts.values() if f.get("weak") and f.get("status") == "current"]
     return {"pending": len(c.pending), "conflicts": len(c.conflicts), "weak": len(weak),
             "new": len(c.new_week), "forgotten": len(c.data["TOMBS"]),
@@ -486,8 +511,12 @@ def panel_home(c: _Ctx, n: dict) -> str:
              ("weak", n["weak"], pl(n["weak"], _("fact on a weak basis|facts on a weak basis")), ""),
              ("week", n["new"], pl(n["new"], _("new fact in 7 days|new facts in 7 days")), "info"),
              ("removed", n["forgotten"], pl(n["forgotten"], _("forgotten on request|forgotten on request")), "")]
+    extra = {"weak": pl(n["provisional"], _("and {n} name in question|and {n} names in question"))
+             if n["provisional"] else ""}
     kpis = "".join(f'<a class="kpi mm-kpi {cls}" href="#mmap/{key}"><div class="v">{num}</div>'
-                   f'<div class="x">{esc(words)}</div></a>' for key, num, words, cls in tiles)
+                   f'<div class="x">{esc(words)}</div>'
+                   + (f'<div class="x mm-kpi-also">{esc(extra[key])}</div>' if extra.get(key) else "")
+                   + '</a>' for key, num, words, cls in tiles)
     lead = (pl(cur, _("{n} current fact|{n} current facts")) + " · "
             + pl(len(c.ents), _("{n} name or topic|{n} names and topics")))
     tasks = c.pending[:TASKS_ON_OVERVIEW]
@@ -535,6 +564,7 @@ def panel_entity(c: _Ctx, e) -> str:
           f'<dt>{_("Needs attention")}</dt><dd>{pl(len(s["att"]), _("{n} fact|{n} facts")) if s["att"] else _("nothing")}</dd></dl>')
     out = (f'<a class="mm-back" href="#mmap/ents">← {_("People and topics")}</a>'
            f'<h2 class="mm-title">{esc(e.get("name"))}</h2>'
+           f'<p class="mm-small mm-type">{type_label(c, e)}</p>'
            f'<div class="mm-meta"><span class="mm-chip {"o-unk" if e.get("standing") == "provisional" else ""}">{esc(standing)}</span>'
            + (f'<span class="mm-m">{_("also")}: {esc(", ".join(aliases))}</span>' if aliases else "")
            + f'<span class="mm-m">{pl(len(s["cur"]), _("{n} fact|{n} facts"))}</span></div>' + kv)
@@ -546,13 +576,104 @@ def panel_entity(c: _Ctx, e) -> str:
         rows = "".join(f'<div class="mm-rel">{ent_chip(c, o)}<span class="mm-m">'
                        f'{pl(k, _("{n} shared fact|{n} shared facts"))}</span></div>'
                        for o, k in sorted(rel.items(), key=lambda x: (-x[1], x[0])))
-        out += sec(_("Connections"), _("a connection is a shared fact, not a relationship"), f'<div class="card">{rows}</div>')
+        out += sec(_("Connections"), _("a connection is a shared fact, not a relationship"),
+                   f'<div class="card mm-eg">{ego_svg(c, e, rel)}<div class="mm-eg-list">{rows}</div></div>')
     if past:
         out += sec(_("Before"), "", "".join(fact_card(c, f, eid) for f in past))
     if c.data["TOMBS"]:
         out += (f'<p class="mm-foot">{_("Forgotten facts are not shown under anyone’s name: after «forget» their text is gone everywhere, here too.")} '
                 f'<a href="#mmap/removed">{_("Removed and closed")}</a></p>')
     return out
+
+
+EGO_MAX = 8
+
+
+def _short(name: str, n: int = 14) -> str:
+    return name if len(name) <= n else name[:n - 1].rstrip() + "…"
+
+
+def ego_svg(c: _Ctx, e, rel: dict) -> str:
+    """This name in the middle, the names it shares facts with around it: the line is as thick as the number of
+    shared facts, which is written on the node. The EGO_MAX with most shared facts; the list beside has them all."""
+    top = sorted(rel.items(), key=lambda x: (-x[1], x[0]))[:EGO_MAX]
+    if not top:
+        return ""
+    w, h, cx, cy, r = 320, 250, 160, 122, 88
+    most = max(k for _o, k in top)
+    lines, nodes = [], []
+    # an even count starts half a step off the top, so no node sits right below the centre, on its label
+    start = -math.pi / 2 + (math.pi / len(top) if len(top) % 2 == 0 else 0.0)
+    for i, (o, k) in enumerate(top):
+        a = start + 2 * math.pi * i / len(top)
+        x, y = cx + r * math.cos(a), cy + r * math.sin(a)
+        name = str(c.ents[o].get("name") or "")
+        kind = {"person": "p", "topic": "t"}.get(c.ents[o].get("type"), "u")
+        width = 1 + 4 * k / most
+        lines.append(f'<line class="mm-eg-edge" x1="{cx}" y1="{cy}" x2="{x:.1f}" y2="{y:.1f}" stroke-width="{width:.1f}"/>')
+        ty = y + (-17 if y < cy - 1 else 25)
+        nodes.append(f'<a href="#mmap/e{int(o)}" class="mm-eg-node {kind}"><title>{esc(name)} · '
+                     f'{esc(pl(k, _("{n} shared fact|{n} shared facts")))}</title>'
+                     f'<circle cx="{x:.1f}" cy="{y:.1f}" r="12"/>'
+                     f'<text class="mm-eg-k" x="{x:.1f}" y="{y + 4:.1f}">{k}</text>'
+                     f'<text x="{x:.1f}" y="{ty:.1f}">{esc(_short(name))}</text></a>')
+    me = str(e.get("name") or "")
+    center = (f'<g class="mm-eg-me"><circle cx="{cx}" cy="{cy}" r="17"/>'
+              f'<text x="{cx}" y="{cy + 35}">{esc(_short(me, 18))}</text></g>')
+    more = len(rel) - len(top)
+    label = _("Connections of {name}").format(name=me)
+    return (f'<div class="mm-eg-fig"><svg viewBox="0 0 {w} {h}" role="img" aria-label="{esc(label)}">'
+            + "".join(lines) + center + "".join(nodes) + '</svg>'
+            + (f'<p class="mm-small">{_("+{n} more — all in the list").format(n=more)}</p>' if more > 0 else "")
+            + '</div>')
+
+
+def timeline(c: _Ctx, f: dict, versions: list) -> str:
+    """The versions as bars on one time axis: each from when it was recorded to when it was replaced; the current
+    one runs to the snapshot, a closed fact's last one stops where it was closed. A corrected version shows no text."""
+    end_day = _day(c.snap.get("made"))
+    spans = []
+    for i, v in enumerate(versions):
+        start = _day(v.get("rec"))
+        if start is None:
+            continue
+        stop = _day(v.get("closed"))
+        if stop is None and v.get("status") == "ended":
+            stop = _day(v.get("to"))
+        if stop is None and v.get("status") != "current" and i + 1 < len(versions):
+            stop = _day(versions[i + 1].get("rec"))
+        if stop is None:
+            stop = end_day if v.get("status") == "current" else start
+        spans.append((v, start, max(stop, start)))
+    if not spans or end_day is None:
+        return ""
+    first = min(a for _v, a, _b in spans)
+    last = max([end_day] + [b for _v, _a, b in spans])
+    total = max(1, (last - first).days)
+    pct = lambda d: 100.0 * (d - first).days / total  # noqa: E731
+    rows = ""
+    for v, a, b in spans:
+        left = pct(a)
+        width = max(1.5, pct(b) - left)
+        width = min(width, 100.0 - left) if left < 100 else 0.0
+        status = str(v.get("status") or "")
+        if status == "corrected":
+            label = _("a mistake, corrected")
+        elif v.get("hidden"):
+            label = _("hidden")
+        else:
+            label = str(v.get("text") or "")
+        tip = _("version {n}").format(n=v.get("seq")) + " · " + version_status(status) + " · " + c.d(a.isoformat())
+        tip += " — " + (c.d(b.isoformat()) if status != "current" else _("now"))
+        cls = status if status in ("current", "changed", "ended", "corrected", "merged") else "changed"
+        rows += (f'<div class="mm-track"><div class="mm-bar {cls}{" hid" if v.get("hidden") else ""}" '
+                 f'style="left:{left:.1f}%;width:{width:.1f}%" title="{esc(tip)}">'
+                 + (f'<span>{esc(label)}</span>' if status == "corrected" else esc(label)) + '</div></div>')
+    return (f'<div class="mm-tl"><div class="mm-tl-axis"><span>{c.d(first.isoformat())}</span>'
+            f'<span>{_("snapshot {d}").format(d=c.d(end_day.isoformat()))}</span></div>{rows}'
+            f'<div class="mm-tl-key"><span><i class="current"></i>{_("in force")}</span>'
+            f'<span><i class="changed"></i>{_("the past")}</span>'
+            f'<span><i class="corrected"></i>{_("a corrected mistake, no text")}</span></div></div>')
 
 
 def panel_fact(c: _Ctx, f) -> str:
@@ -608,7 +729,8 @@ def panel_fact(c: _Ctx, f) -> str:
             f'<h2 class="mm-title">{esc(f.get("text"))}</h2>'
             f'<div class="mm-meta">{origin_chip(f.get("origin"))}{trust_chip(f, True)}{chips}</div>{flags}'
             + sec(_("Where it comes from"), "", kv)
-            + (sec(_("Version history"), pl(len(versions), _("{n} version|{n} versions")), vhtml) if versions else "")
+            + (sec(_("Version history"), pl(len(versions), _("{n} version|{n} versions")),
+                   timeline(c, f, versions) + vhtml) if versions else "")
             + (sec(_("Merged into it"), "", mhtml) if mhtml else "")
             + hint(_("Read-only. To change it, say in the chat: «fact №{n} is outdated: …», «№{n} is a mistake» or «forget №{n}».").format(n=int(fid))))
 
@@ -621,13 +743,60 @@ def panel_conflicts(c: _Ctx) -> str:
         a, b = c.facts.get(x.get("a")), c.facts.get(x.get("b"))
         if not a or not b:
             continue
-        older, newer = (a, b) if str(a.get("rec") or "") <= str(b.get("rec") or "") else (b, a)
+        rel = x.get("relies") if isinstance(x.get("relies"), dict) else {}
+        on = rel.get("on")
         shared = "".join(ent_chip(c, e) for e in x.get("shared") or [])
-        out += (f'<div class="card mm-pend"><div class="mm-row"><span class="pill p-no">{_("contradiction")}</span>{shared}</div>'
-                f'<div class="mm-pair">{side(c, older["id"], _("Recorded earlier"))}{side(c, newer["id"], _("Recorded later"))}</div>'
+        since = (f'<span class="mm-m">{_("both stand since {d}").format(d=c.d(x["since"]))}</span>'
+                 if x.get("since") else "")
+        if on in (a["id"], b["id"]):
+            first, second = (a, b) if on == a["id"] else (b, a)
+            pair = side(c, first["id"], _("Leans on now")) + side(c, second["id"], _("Disagrees"))
+            why = _leans_why(c, rel, first["id"], second["id"])
+            outdated, mistake = second["id"], first["id"]  # the side search does not lean on is the one to question
+        else:
+            first, second = (a, b) if str(a.get("rec") or "") <= str(b.get("rec") or "") else (b, a)
+            pair = side(c, first["id"], _("Recorded earlier")) + side(c, second["id"], _("Recorded later"))
+            outdated, mistake = first["id"], second["id"]
+            why = {"tie": _("Search weighs both the same: which comes first depends on the question."),
+                   "neither_found": _("Both are below the trust floor: search finds neither."),
+                   "rerank": _("The reranker orders them by the question’s text: which comes first depends on the question."),
+                   "settings_unknown": _("The memory settings could not be read, so the order is not known.")}.get(
+                rel.get("why"), "")
+        out += (f'<div class="card mm-pend"><div class="mm-row"><span class="pill p-no">{_("contradiction")}</span>'
+                f'{shared}{since}</div><div class="mm-pair">{pair}</div>'
+                + (f'<p class="mm-small">{esc(why)}</p>' if why else "")
+                + _differ(x, a["id"], b["id"])
                 + hint(_("Answer in the chat: «fact №{a} is outdated: …» or «№{b} is a mistake» — or «both are right».").format(
-                    a=int(older["id"]), b=int(newer["id"]))) + '</div>')
+                    a=int(outdated), b=int(mistake))) + '</div>')
     return out
+
+
+def _leans_why(c: _Ctx, rel: dict, first: int, second: int) -> str:
+    sides = rel.get("sides") if isinstance(rel.get("sides"), dict) else {}
+    one, two = sides.get(str(first)) or {}, sides.get(str(second)) or {}
+    num = lambda v: f"{v:.2f}" if isinstance(v, (int, float)) and not isinstance(v, bool) else "?"  # noqa: E731
+    if rel.get("why") == "floor":
+        floor = (c.snap.get("ranking") or {}).get("min_trust") if isinstance(c.snap.get("ranking"), dict) else None
+        return _("Search does not find №{b} at all: its trust {t} is below the floor {f}.").format(
+            b=second, t=num(two.get("trust")), f=num(floor))
+    text = _("When a question fits both equally, search puts №{a} first: trust {ta} against {tb}").format(
+        a=first, ta=num(one.get("trust")), tb=num(two.get("trust")))
+    if isinstance(one.get("decay"), (int, float)) and isinstance(two.get("decay"), (int, float)):
+        text += _(", freshness {da} against {db}").format(da=num(one["decay"]), db=num(two["decay"]))
+    return text + ". " + _("A question that fits the other’s words better can still bring it up first.")
+
+
+def _differ(x: dict, a: int, b: int) -> str:
+    d = x.get("differ") if isinstance(x.get("differ"), dict) else {}
+    words = lambda k: [w for w in d.get(k) or [] if isinstance(w, str)]  # noqa: E731
+    bits = []
+    if words("a"):
+        bits.append(_("only in №{n}: {w}").format(n=a, w=esc(", ".join(words("a")))))
+    if words("b"):
+        bits.append(_("only in №{n}: {w}").format(n=b, w=esc(", ".join(words("b")))))
+    if d.get("negation") is True:
+        bits.append(esc(_("one of them is the negation of the other")))
+    return f'<p class="mm-small"><b>{_("What differs")}:</b> {" · ".join(bits)}</p>' if bits else ""
 
 
 def panel_weak(c: _Ctx) -> str:
@@ -641,6 +810,9 @@ def panel_weak(c: _Ctx) -> str:
     names = {"low_trust": _("Low trust"), "never_recalled": _("Never came up in 60+ days"),
              "unconfirmed_inference": _("Inferences nobody confirmed"), "near_duplicate": _("Almost repeat another fact"),
              "no_source": _("Source not recorded")}
+    count = _counts(c)["weak"]
+    if count:
+        out += f'<p class="mm-small">{pl(count, _("{n} fact on a weak basis|{n} facts on a weak basis"))}</p>'
     for code, fs in sorted(groups.items()):
         out += sec(names.get(code, esc(code)), pl(len(fs), _("{n} fact|{n} facts")), "".join(fact_card(c, f) for f in fs))
     if not groups:
@@ -702,6 +874,8 @@ def panel_week(c: _Ctx) -> str:
     for x in c.feed:
         days.setdefault(str(x.get("d") or ""), []).append(x)
     out = f'<p class="mm-lead">{_("{a} — {b}: what the agent learned, changed, confirmed and forgot, and what the nightly review did.").format(a=c.d(c.snap.get("week_from")), b=c.d(c.snap.get("made")))}</p>'
+    out += (f'<p class="mm-small">{pl(len(c.new_week), _("{n} new fact|{n} new facts"))} · '
+            f'{pl(len(c.feed), _("{n} event in all|{n} events in all"))}</p>')
     for d in sorted(days, reverse=True):
         out += sec(c.d(d), "", '<div class="card mm-feed">' + "".join(feed_row(c, x) for x in days[d]) + '</div>')
     return out
@@ -826,9 +1000,9 @@ def view(cfg: Config, data: dict | None, err: MapUnavailable | None = None, ever
     labels = {"home": _("Overview"), "ents": _("People and topics"), "pending": _("Waits for your decision"),
               "conflicts": _("Contradictions"), "weak": _("Weak basis"), "week": _("This week"),
               "removed": _("Removed and closed"), "about": _("About the snapshot")}
-    badge = {"pending": n["pending"], "conflicts": n["conflicts"], "weak": n["weak"] + n["provisional"],
-             "week": len(c.feed), "removed": len(c.data["TOMBS"]) + len(c.data["MERGES"]) + len(c.data["HIDDEN"])
-             + sum(1 for f in c.facts.values() if f.get("status") == "ended")}
+    # the same numbers as the overview tiles (_counts), nothing added
+    badge = {"pending": n["pending"], "conflicts": n["conflicts"], "weak": n["weak"], "week": n["new"],
+             "removed": n["forgotten"]}
     on = ' class="on"'
     nav = "".join(f'<a href="#mmap/{key}" data-pg="{key}"{on if key == "home" else ""}>{esc(labels[key])}'
                   + (f'<b class="{"hot" if key in ("pending", "conflicts") else ""}">{badge[key]}</b>' if badge.get(key) else "")

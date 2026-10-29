@@ -279,5 +279,212 @@ class MemoryMapTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--tz") + 1], "-03:00")
 
 
+    def test_the_exporter_is_given_the_agents_search_settings(self):
+        """Which side of a contradiction the agent leans on depends on the plugin's search settings (trust floor,
+        decay): the exporter gets the agent's config.yaml when there is one, and nothing when there is none (the
+        plugin then runs on its defaults, and so does the export)."""
+        home = new_home()
+        seen = home / "argv.json"
+        fake_plugin(home, "json.dump(sys.argv[1:], open(%r, 'w'))\n" % str(seen) + printing(snapshot()))
+        build.gen_memory_map.load(cfg_for(home))
+        self.assertNotIn("--config", json.loads(seen.read_text()))
+        (home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+        build.gen_memory_map.load(cfg_for(home))
+        argv = json.loads(seen.read_text())
+        self.assertEqual(argv[argv.index("--config") + 1], str(home / "config.yaml"))
+
+
+def rich_snapshot() -> dict:
+    """Every page has something: weak facts, names in question, a week of events, everything removed four ways,
+    the night's questions, contradictions with and without an answer about the order."""
+    s = snapshot()
+    base = s["FACTS"][0]
+
+    def fact(fid, text, **kw):
+        return dict(base, **dict({"id": fid, "text": text, "versions": [], "conf": []}, **kw))
+
+    s["FACTS"] = [
+        fact(1, "Varya swims on Tuesdays.", rec="2026-09-10", weak=[], trust=0.7, trust_level="strong"),
+        fact(2, "Varya swims on Wednesdays.", rec="2026-10-25", weak=["low_trust"], trust=0.25,
+             trust_level="weak"),
+        fact(3, "Alena does not eat dairy.", rec="2026-08-01", weak=["unconfirmed_inference"], ents=[4]),
+        fact(4, "Alena asked for cottage cheese.", rec="2026-10-26", weak=[], ents=[4]),
+        fact(6, "Dmitry wakes at 7.", rec="2026-10-01", weak=["no_source"], ents=[]),
+        fact(7, "Dmitry wakes at 6.", rec="2026-10-02", weak=[], ents=[]),
+        fact(5, "Varya went to the Sunshine kindergarten.", status="ended", to="2026-08-31", weak=[]),
+    ]
+    s["ENT"] = [dict(s["ENT"][0], id=3, name="Varya", type="person", type_by="relative_or_role", type_fact=1),
+                dict(s["ENT"][0], id=4, name="Olga Petrovna", standing="provisional", type=None),
+                dict(s["ENT"][0], id=5, name="Swimming", standing="provisional", type=None)]
+    s["CONFLICTS"] = [
+        {"id": "C1", "a": 1, "b": 2, "score": 0.8, "shared": [3], "since": "2026-10-25",
+         "differ": {"a": ["tuesdays"], "b": ["wednesdays"], "negation": False},
+         "relies": {"on": 1, "why": "weight", "sides": {"1": {"trust": 0.7, "found": True, "decay": None},
+                                                        "2": {"trust": 0.4, "found": True, "decay": None}}}},
+        {"id": "C2", "a": 3, "b": 4, "score": 0.6, "shared": [4], "since": "2026-10-26",
+         "differ": {"a": ["dairy"], "b": ["cottage", "cheese"], "negation": True},
+         "relies": {"on": None, "why": "tie", "sides": {}}},
+        {"id": "C3", "a": 6, "b": 7, "score": 0.5, "shared": []},   # an exporter from before "relies"
+    ]
+    s["PENDING"] = ([{"kind": "conflict", "id": c["id"], "a": c["a"], "b": c["b"], "status": "open"}
+                     for c in s["CONFLICTS"]]
+                    + [{"kind": "merge", "id": "D-4", "keep": 1, "copy": 2, "covered": True, "extra": [],
+                        "created": "2026-10-26", "asked": None, "status": "open", "current": True},
+                       {"kind": "memory_conflict", "id": "M-1", "fact": 1, "entry": "Swims on Fridays.",
+                        "asked": "2026-10-27", "status": "open"},
+                       {"kind": "relevant", "id": "R-7", "text": "Water the flowers.", "last_mention_days": 61,
+                        "asked": "2026-10-27", "status": "open"},
+                       {"kind": "queue", "id": "Q", "records": 1, "writes": 2, "unreadable": 0,
+                        "oldest": "2026-10-20", "status": "open"}])
+    s["FEED"] = [{"d": "2026-10-27", "k": "new", "f": 4},
+                 {"d": "2026-10-27", "k": "night", "at": "2026-10-27T03:05:00+07:00", "alerts": [], "stats": {}},
+                 {"d": "2026-10-26", "k": "conf", "f": 1, "by": "Alena"},
+                 {"d": "2026-10-25", "k": "new", "f": 2}]
+    s["TOMBS"] = [{"id": 9, "d": "2026-10-25"}]
+    s["MERGES"] = [{"from": 8, "into": 1, "d": "2026-10-23", "prop": "D-2", "text": "Varya swims."}]
+    s["HIDDEN"] = [{"id": 10, "d": "2026-10-01", "why": "credential", "status": "current"}]
+    return s
+
+
+def tile(html: str, key: str) -> int:
+    m = re.search(r'<a class="kpi mm-kpi[^"]*" href="#mmap/%s"><div class="v">(\d+)</div>' % key, html)
+    assert m, "no tile " + key
+    return int(m.group(1))
+
+
+def badge(html: str, key: str) -> int:
+    m = re.search(r'<a href="#mmap/%s" data-pg="%s"[^>]*>[^<]*(?:<b[^>]*>(\d+)</b>)?</a>' % (key, key), html)
+    assert m, "no nav link " + key
+    return int(m.group(1) or 0)
+
+
+def visible(html: str) -> str:
+    return re.sub(r"<[^>]+>", " ", html)
+
+
+class MemoryMapPagesTests(unittest.TestCase):
+    """What a person reads on the pages of the tab."""
+
+    def setUp(self):
+        i18n.set_lang("en")
+        self.html = build.gen_memory_map.view(cfg_for(new_home()), rich_snapshot())
+
+    def tearDown(self):
+        i18n.set_lang("en")
+
+    def test_one_number_means_one_thing_on_the_tile_and_the_tab(self):
+        """The number on an overview tile and on the tab it leads to count the same things: «6 facts on a weak
+        basis» on the tile and 8 on the tab (6 facts + 2 names) was the bug."""
+        h = self.html
+        self.assertEqual(tile(h, "weak"), 3, "facts 2, 3 and 6")
+        for key in ("pending", "conflicts", "weak", "week", "removed"):
+            self.assertEqual(tile(h, key), badge(h, key), key)
+        home = visible(panel(h, "home"))
+        self.assertIn("and 2 names in question", home, "the names are said apart, next to the facts")
+        self.assertIn("Names guessed from one fact", panel(h, "weak"))
+        self.assertEqual(tile(h, "week"), 2, "two new facts, not four events")
+        self.assertEqual(tile(h, "removed"), 1, "forgotten on request")
+
+    def test_a_question_shows_only_a_number_the_chat_takes(self):
+        """D-4 is what the person answers in the chat («yes D-4»); C1, M-1, R-7 are the export's own counters that
+        no command takes, so they are not shown anywhere."""
+        text = visible(self.html)
+        self.assertIn("D-4", text)
+        for internal in ("C1", "C2", "M-1", "R-7"):
+            self.assertIsNone(re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(internal), text), internal)
+
+    def test_people_topics_and_undetermined_names_are_apart(self):
+        s = rich_snapshot()
+        s["ENT"].append(dict(s["ENT"][0], id=6, name="Lyceum No. 3", type="topic", type_by="digit"))
+        s["FACTS"][4]["ents"] = [6]
+        html = build.gen_memory_map.view(cfg_for(new_home()), s)
+        ents = panel(html, "ents")
+        sections = {m.group(1): m.group(2) for m in re.finditer(
+            r'<h2>([^<]+)</h2>(.*?)(?=<div class="sec">|$)', ents, re.S)}
+        self.assertIn("Varya", visible(sections["People"]))
+        self.assertNotIn("Olga Petrovna", visible(sections["People"]), "an undetermined name is not a person")
+        self.assertIn("Lyceum No. 3", visible(sections["Topics and projects"]))
+        self.assertIn("Olga Petrovna", visible(sections["Not determined"]))
+        self.assertIn("Swimming", visible(sections["Not determined"]))
+        self.assertNotIn("<h2>People and topics</h2>", ents, "no mixed section any more")
+
+    def test_a_contradiction_shows_what_the_agent_leans_on_now(self):
+        page = panel(self.html, "conflicts")
+        cards = page.split('<div class="card mm-pend">')[1:]
+        self.assertEqual(len(cards), 3)
+        first = visible(cards[0])
+        # №1 was recorded earlier but is trusted more: it is what search puts first, on the left
+        self.assertLess(first.index("Leans on now"), first.index("№1"))
+        self.assertLess(first.index("№1"), first.index("Disagrees"))
+        self.assertLess(first.index("Disagrees"), first.index("№2"))
+        self.assertIn("0.70", first)
+        self.assertIn("0.40", first)
+        self.assertIn("tuesdays", first)
+        self.assertIn("wednesdays", first)
+        # no answer about the order: earlier / later, and why it is not said
+        second = visible(cards[1])
+        self.assertNotIn("Leans on now", second)
+        self.assertIn("Recorded earlier", second)
+        self.assertIn("depends on the question", second)
+        self.assertIn("negation", second)
+        third = visible(cards[2])
+        self.assertIn("Recorded earlier", third)
+
+    def test_version_bars_run_from_record_to_replacement(self):
+        s = rich_snapshot()
+
+        def v(seq, st, rec, closed, text):
+            return {"seq": seq, "status": st, "text": text, "from": None, "to": None, "to_exact": True, "rec": rec,
+                    "closed": closed, "origin": "said", "via": "tool"}
+
+        s["FACTS"][0]["versions"] = [v(1, "corrected", "2026-08-01", "2026-08-02", None),
+                                     v(2, "changed", "2026-08-02", "2026-09-10", "Varya swims on Mondays."),
+                                     v(3, "current", "2026-09-10", None, "Varya swims on Tuesdays.")]
+        s["FACTS"][-1]["versions"] = [v(1, "ended", "2026-06-01", "2026-08-31", "Varya went to the kindergarten.")]
+        html = build.gen_memory_map.view(cfg_for(new_home()), s)
+
+        def bars(fid):
+            page = panel(html, "f%d" % fid)
+            self.assertIn('class="mm-tl"', page)
+            return [(m.group(1), float(m.group(2)), float(m.group(3)), m.group(4)) for m in re.finditer(
+                r'<div class="mm-bar ([\w ]+)" style="left:([\d.]+)%;width:([\d.]+)%"[^>]*>(.*?)</div>', page)]
+
+        b = bars(1)
+        self.assertEqual([x[0].split()[0] for x in b], ["corrected", "changed", "current"])
+        self.assertNotIn("Mondays", b[0][3], "a corrected version shows no text")
+        self.assertLess(b[0][1], b[1][1])
+        self.assertLess(b[1][1], b[2][1])
+        self.assertAlmostEqual(b[2][1] + b[2][2], 100, delta=0.2, msg="the current version runs to the snapshot")
+        self.assertAlmostEqual(b[1][1] + b[1][2], b[2][1], delta=0.2, msg="a version ends where the next begins")
+        ended = bars(5)
+        self.assertLess(ended[0][1] + ended[0][2], 90, "a closed fact's bar stops where it was closed")
+
+    def test_connections_are_drawn_around_the_name(self):
+        s = rich_snapshot()
+        base = s["FACTS"][0]
+        s["ENT"] = [dict(s["ENT"][0], id=i, name=("<b>N%d</b>" % i), type=None) for i in range(20, 32)]
+        # ten neighbours of 20 with 3 shared facts each; 21 and 22 get more; 31 shares nothing
+        s["FACTS"] = [dict(base, id=100 + k, ents=[20, 21 + k % 10], weak=[], versions=[]) for k in range(30)]
+        s["FACTS"] += [dict(base, id=200 + k, ents=[20, 21], weak=[], versions=[]) for k in range(4)]
+        s["FACTS"] += [dict(base, id=300 + k, ents=[20, 22], weak=[], versions=[]) for k in range(2)]
+        s["FACTS"] += [dict(base, id=400, ents=[31], weak=[], versions=[])]
+        s["CONFLICTS"], s["PENDING"] = [], []
+        html = build.gen_memory_map.view(cfg_for(new_home()), s)
+        page = panel(html, "e20")
+        svg = re.search(r"<svg[^>]*>.*?</svg>", page, re.S)
+        self.assertIsNotNone(svg, "no drawing of the connections")
+        svg = svg.group(0)
+        links = re.findall(r'<a href="#mmap/e(\d+)"', svg)
+        self.assertEqual(len(links), 8, "the 8 with most shared facts")
+        self.assertEqual(links[:2], ["21", "22"])
+        self.assertIn("+2 more", visible(page))
+        widths = [float(w) for w in re.findall(r'<line[^>]*stroke-width="([\d.]+)"', svg)]
+        self.assertEqual(len(widths), 8)
+        self.assertEqual(widths, sorted(widths, reverse=True))
+        self.assertGreater(widths[0], widths[-1])
+        self.assertNotIn("<b>N2", svg)
+        self.assertNotIn("<svg", panel(html, "e31"), "a name that shares nothing has no drawing")
+
+
 if __name__ == "__main__":
     unittest.main()

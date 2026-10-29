@@ -166,6 +166,10 @@ FAMILY_ENT = [(1, "Dmitry", ["Dima"]), (2, "Alena", ["Alyona"]), (3, "Varya", ["
               (10, "Kitchen renovation", ["the kitchen"]), (11, "Grandma Nina", ["Nina Vasilyevna"]),
               (12, "Dr. Mamedova", []), (13, "Swimming", ["the pool"])]
 PROVISIONAL = {5: 55, 13: 50}   # names guessed from one fact: id -> days ago
+# what the exporter could tell about a name: id -> (type, rule, fact that showed it); the rest is not determined
+TYPES = {1: ("person", "speaker", None), 2: ("person", "speaker", None), 3: ("person", "relative_or_role", 34),
+         7: ("topic", "digit", None), 11: ("person", "relative_or_role", 22),
+         12: ("person", "relative_or_role", 7)}
 FAMILY = [
     (1, "Varya is in class 2B at Lyceum No. 3.", [3, 7], "school", "said", .65, 58, "tool", "dm", "Dmitry", [(40, "Alena")], 14, []),
     (2, "Varya's class teacher is Olga Petrovna.", [3, 5, 7], "school", "said", .5, 55, "auto_extract", "dm", "Alena", [], 3, []),
@@ -197,7 +201,7 @@ FAMILY = [
     (31, "The family lives at 12 Garden Street.", [1, 2, 3], "home", "said", .6, 243, "tool", "dm", "Dmitry", [(178, "Alena")], 17, []),
     (32, "Dmitry cycles to work.", [1], "preferences", "confirmed", .65, 142, "tool", "dm", "Dmitry", [(140, "Dmitry")], 4, []),
     (33, "Friday is Varya's library day: the books must go back.", [3, 7], "school", "said", .5, 3, "auto_extract", "dm", "Alena", [], 1, []),
-    (34, "Varya wants a scooter for her birthday.", [3], "family", "said", .5, 5, "auto_extract", "group", "Varya", [], 0, []),
+    (34, "Our daughter Varya wants a scooter for her birthday.", [3], "family", "said", .5, 5, "auto_extract", "group", "Alena", [], 0, []),
     (36, "The pump at the dacha is broken; Timur promised to have a look.", [8, 6], "dacha", "said", .5, 4, "auto_extract", "group", "Dmitry", [], 0, []),
     (39, "No internet at the dacha, only by the gate.", [8], "dacha", "said", .5, 9, "auto_extract", "group", "Dmitry", [], 0, ["near_duplicate"]),
     (40, "The Wi-Fi router is in the hallway cupboard.", [], "home", "unknown", .5, 400, "legacy", None, None, [], 3, []),
@@ -257,12 +261,21 @@ def demo_memory_map(offset_h: int) -> dict:
     for f in facts:
         for e in f["ents"]:
             count[e] = count.get(e, 0) + 1
-    ents = [{"id": eid, "name": name, "type": None, "declared": eid not in PROVISIONAL, "aliases": aliases,
+    ents = [{"id": eid, "name": name, "type": TYPES.get(eid, (None,))[0],
+             "type_by": TYPES.get(eid, (None, None))[1], "type_fact": TYPES.get(eid, (None, None, None))[2],
+             "declared": eid not in PROVISIONAL, "aliases": aliases,
              "text_aliases": [], "standing": "provisional" if eid in PROVISIONAL else "established",
              "stale": False, "since": d(PROVISIONAL.get(eid, 300)), "facts": count.get(eid, 0)}
             for eid, name, aliases in FAMILY_ENT]
-    conflicts = [{"id": "C1", "a": 4, "b": 5, "score": 0.82, "shared": [3, 13]},
-                 {"id": "C2", "a": 8, "b": 9, "score": 0.64, "shared": [2]}]
+    conflicts = [
+        {"id": "C1", "a": 4, "b": 5, "score": 0.82, "shared": [3, 13], "since": d(10),
+         "differ": {"a": ["tuesdays", "thursdays", "17:00"], "b": ["moved", "wednesday", "17:30"], "negation": False},
+         "relies": {"on": None, "why": "tie", "sides": {"4": {"trust": .5, "found": True, "decay": None},
+                                                        "5": {"trust": .5, "found": True, "decay": None}}}},
+        {"id": "C2", "a": 8, "b": 9, "score": 0.64, "shared": [2], "since": d(6),
+         "differ": {"a": ["eat", "dairy"], "b": ["asked", "buy", "cottage", "cheese", "casserole"], "negation": True},
+         "relies": {"on": 9, "why": "weight", "sides": {"8": {"trust": .4, "found": True, "decay": None},
+                                                        "9": {"trust": .5, "found": True, "decay": None}}}}]
     pending = [{"kind": "conflict", "id": c["id"], "a": c["a"], "b": c["b"], "status": "open"} for c in conflicts] + [
         {"kind": "merge", "id": "D-17", "keep": 1, "copy": 28, "covered": True, "extra": [], "created": d(3),
          "asked": d(2), "status": "open", "current": True},
@@ -296,6 +309,7 @@ def demo_memory_map(offset_h: int) -> dict:
                        "provisional": len(PROVISIONAL),
                        "legacy": sum(1 for f in current if f["via"] == "legacy" and f["origin"] == "unknown")},
             "week_from": d(7), "excluded": [{"what": "hidden_by_screen", "count": len(hidden)}],
+            "ranking": {"source": "config", "min_trust": 0.3, "half_life": 0, "rerank": False, "meaning": False},
             "experience": {"included": False},
             "dreaming": {"read": True, "reason": None, "files": {"proposals": "ok", "report": "ok", "queue": "ok"}}}
     return {"schema_version": 1, "SNAP": snap, "ENT": ents, "FACTS": facts, "CONFLICTS": conflicts,

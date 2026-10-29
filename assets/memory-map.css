@@ -97,10 +97,50 @@ a.mm-chip:hover{color:var(--ink);border-color:var(--ink3)}
 .mm-tomb:first-of-type{border-top:0}
 .mm-bounds p{position:relative;z-index:2;font-size:12.5px;color:var(--ink2);margin:0 0 9px;line-height:1.55}
 .mm-bounds p b{color:var(--ink)}
+.mm-kpi-also{margin-top:2px}
+.mm-type{margin:0 0 2px}
+.mm-type .mm-fid{margin:0}
+/* version bars: one row per version on a shared time axis */
+.mm-tl{position:relative;z-index:2;margin:4px 0 14px}
+.mm-tl-axis{display:flex;justify-content:space-between;gap:10px;font-family:var(--f-num);font-size:10.5px;
+  color:var(--ink2);margin-bottom:4px}
+.mm-track{position:relative;height:26px;border-bottom:1px dashed var(--edge2)}
+.mm-bar{position:absolute;top:3px;height:20px;box-sizing:border-box;min-width:6px;border-radius:5px;
+  border:1px solid var(--edge);background:var(--id-bg);color:var(--ink2);font-size:11px;line-height:18px;
+  padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mm-bar.current{border-color:var(--lime);background:var(--ok-bg);color:var(--ink)}
+.mm-bar.ended{border-right:3px solid var(--ink3)}
+.mm-bar.corrected{border:1px dashed var(--red);color:var(--red);
+  background:repeating-linear-gradient(135deg,var(--no-bg) 0 4px,transparent 4px 8px)}
+.mm-bar.corrected span{background:var(--tile);border-radius:3px;padding:0 3px}
+.mm-tl-key{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:10.5px;color:var(--ink2);margin-top:7px}
+.mm-tl-key i{display:inline-block;width:14px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle;
+  border:1px solid var(--edge);background:var(--id-bg)}
+.mm-tl-key i.current{border-color:var(--lime);background:var(--ok-bg)}
+.mm-tl-key i.corrected{border:1px dashed var(--red);background:var(--no-bg)}
+/* connections: this name in the middle, the names it shares facts with around it */
+.mm-eg{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:8px 18px;align-items:start}
+.mm-eg-fig,.mm-eg-list{position:relative;z-index:2;min-width:0}
+.mm-eg-fig svg{display:block;width:100%;height:auto;max-width:340px;margin:0 auto;overflow:visible}
+.mm-eg-fig .mm-small{margin:4px 0 0;text-align:center}
+.mm-eg-edge{stroke:var(--ink3);stroke-linecap:round;opacity:.75}
+.mm-eg-fig text{font-family:var(--f-body);font-size:11px;fill:var(--ink);text-anchor:middle;
+  paint-order:stroke;stroke:var(--tile);stroke-width:4px;stroke-linejoin:round}
+.mm-eg-fig text.mm-eg-k{stroke:none}
+.mm-eg-node circle{fill:var(--tile);stroke:var(--ink3);stroke-width:2}
+.mm-eg-node.p circle{stroke:var(--cyan)}
+.mm-eg-node.t circle{stroke:var(--amber)}
+.mm-eg-fig text.mm-eg-k{font-family:var(--f-num);font-size:10px;font-weight:600}
+.mm-eg-node:hover text,.mm-eg-node:focus text{text-decoration:underline}
+.mm-eg-node:focus{outline:none}
+.mm-eg-node:focus-visible circle{stroke-width:3.5}
+.mm-eg-me circle{fill:var(--brand-bg);stroke:var(--lime);stroke-width:2.5}
+.mm-eg-me text{font-weight:600}
 @media(max-width:640px){
   .mm-pair{grid-template-columns:1fr}
   .mm-kv{grid-template-columns:1fr;gap:2px}
   .mm-kv dd{margin-bottom:8px}
   .mm-task{grid-template-columns:1fr}
   .mm-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .mm-eg{grid-template-columns:1fr}
 }

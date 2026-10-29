@@ -21,7 +21,20 @@ rest of the build is unaffected. Off, the pages are byte-for-byte what they
 were and nothing is spawned. The demo (`tools/make_demo.py`) shows an invented
 family.
 
-Tests: 67 → 73.
+People, topics and names memory cannot type are listed apart (the export
+decides: a person only by what the store holds, never by a capital letter). A
+contradiction shows which fact the agent leans on now — the side search puts
+first by the plugin's own trust floor and trust x decay, read from the agent's
+`config.yaml` (passed as `--config`) — and why, or says that the question
+decides; plus the words that tell the two apart. A fact card draws its versions
+as bars on a time axis (from the record to the replacement; a corrected one
+without text), and a name card draws its connections around it (the 8 with
+most shared facts, the list has all). One number means one thing: the tab's
+button counts what its overview tile counts (names in question are no longer
+added to the weak facts), and only the numbers a person answers in the chat
+(D-NN) are shown.
+
+Tests: 67 → 80.
 
 
 ## v0.7.2 — 2026-08-31
