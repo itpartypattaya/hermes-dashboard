@@ -314,7 +314,9 @@ To try the tab without an agent, `python tools/make_demo.py /tmp/demo` builds th
   The plugin's `docs/memory-map.md` lists all of its limits.
 * **The whole map is inside `index.html`.** Every visit to any tab downloads it: about
   50 KB of export for 40 facts, but on a test store of 10,000 facts and 1,000 names the
-  page grew to about 26 MB and took 8 s to draw per language. There is no cap yet.
+  page grew to about 26 MB and took 8 s to draw per language. From holographic 0.25.0 the
+  export keeps at most 1000 facts and 300 names (questions and the week's facts first, then
+  the newest), and the tab says how many it shows; with an older plugin there is no limit.
 * **A build waits for the export** (`memory_map.timeout_s`, 60 s by default). On a
   store in rollback-journal mode the agent's writes wait while it reads (under a second
   on a 3,000-fact test store).

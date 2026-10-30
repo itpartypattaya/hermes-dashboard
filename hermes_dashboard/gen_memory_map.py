@@ -18,6 +18,7 @@ messages, so it is escaped like any other untrusted text.
 """
 from __future__ import annotations
 
+import builtins
 import json
 import math
 import os
@@ -108,7 +109,17 @@ def _run(cmd: list[str], env: dict, timeout: float) -> tuple[int, bytes, bytes]:
     return p.returncode, out, err
 
 
-_ERROR_NAME = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt))\b")
+_ERROR_NAME = re.compile(r"^(?:sqlite3\.)?([A-Za-z]+)(?::|$)")
+
+
+def _known_error(name: str) -> bool:
+    """A Python built-in exception class or one of sqlite3's: a name the exporter cannot make up from stored text."""
+    cls = getattr(builtins, name, None)
+    if isinstance(cls, type) and issubclass(cls, BaseException):
+        return True
+    import sqlite3
+    cls = getattr(sqlite3, name, None)
+    return isinstance(cls, type) and issubclass(cls, BaseException)
 
 
 def _stderr_kind(err: bytes) -> str:
@@ -117,7 +128,7 @@ def _stderr_kind(err: bytes) -> str:
     password."""
     lines = [ln.strip() for ln in err.decode("utf-8", "replace").splitlines() if ln.strip()]
     m = _ERROR_NAME.match(lines[-1]) if lines else None
-    if m:
+    if m and _known_error(m.group(1)):
         return m.group(1)
     if lines and lines[-1].startswith("memory_map:"):
         return "memory_map error"
@@ -142,8 +153,10 @@ def collect(cfg: Config) -> dict:
     except (UnicodeDecodeError, ValueError):
         raise MapUnavailable("not_json", f"{len(out)} bytes") from None
     if not isinstance(data, dict) or data.get("schema_version") not in SUPPORTED_SCHEMAS:
-        got = data.get("schema_version") if isinstance(data, dict) else type(data).__name__
-        raise MapUnavailable("schema", f"schema_version {got!r}")
+        got = data.get("schema_version") if isinstance(data, dict) else None
+        # a number is shown, anything else only by its type: the value could be any text the exporter printed
+        shown = got if isinstance(got, int) and not isinstance(got, bool) else type(got).__name__
+        raise MapUnavailable("schema", f"schema_version {shown}")
     for key, kind in REQUIRED.items():
         if not isinstance(data.get(key), kind):
             raise MapUnavailable("schema", f"{key} is not a {kind.__name__}")
@@ -544,6 +557,22 @@ def _counts(c: _Ctx) -> dict:
             "provisional": sum(1 for e in c.ents.values() if e.get("standing") == "provisional")}
 
 
+def limit_note(c: _Ctx) -> str:
+    """What the export's size limit left out (plugin 0.25.0+, SNAP.limits), or "" when nothing was cut."""
+    limits = c.snap.get("limits") if isinstance(c.snap.get("limits"), dict) else {}
+    parts = []
+    for key, forms in (("facts", _("of {n} fact|of {n} facts")),
+                       ("entities", _("of {n} name|of {n} names"))):
+        x = limits.get(key) if isinstance(limits.get(key), dict) else {}
+        shown, total = _int(x.get("shown")), _int(x.get("total"))
+        if shown is not None and total is not None and total > shown:
+            parts.append(f"{shown} " + pl(total, forms))
+    if not parts:
+        return ""
+    return _("The store is over the map's size limit: it shows {what}. Questions and the week's facts come first, "
+             "then the newest.").format(what=", ".join(parts))
+
+
 def panel_home(c: _Ctx, n: dict) -> str:
     cur = sum(1 for f in c.facts.values() if f.get("status") == "current")
     tiles = [("pending", n["pending"], pl(n["pending"], _("waits for your decision|wait for your decision")), "warn" if n["pending"] else "ok"),
@@ -564,7 +593,9 @@ def panel_home(c: _Ctx, n: dict) -> str:
                  + (f'<a class="mm-more" href="#mmap/pending">{_("All {n} →").format(n=len(c.pending))}</a>'
                     if len(c.pending) > TASKS_ON_OVERVIEW else "") + '</div>') if tasks else \
         f'<div class="card mm-small">{_("Nothing waits for a decision.")}</div>'
-    return (f'<p class="mm-lead">{lead}</p><div class="kpis mm-kpis">{kpis}</div>'
+    note = limit_note(c)
+    return (f'<p class="mm-lead">{lead}</p>' + (f'<p class="mm-small mm-limit">{esc(note)}</p>' if note else "")
+            + f'<div class="kpis mm-kpis">{kpis}</div>'
             + sec(_("Waits for your decision"), "", task_html) + _ent_grids(c)
             + f'<p class="mm-foot">{_("Read-only. The map is rebuilt together with the dashboard; something forgotten disappears from it on the next rebuild.")} '
               f'<a href="#mmap/about">{_("About the snapshot")}</a></p>')
@@ -781,7 +812,12 @@ def panel_conflicts(c: _Ctx) -> str:
     out = (f'<p class="mm-lead">{_("Two facts about the same thing say different things. The agent does not choose by itself: both stay until a person answers.")}</p>')
     for x in c.conflicts:
         a, b = c.facts.get(x.get("a")), c.facts.get(x.get("b"))
-        if not a or not b:
+        if not a or not b:  # a side the export's size limit left out: the card stays, that side is its number
+            out += (f'<div class="card mm-pend"><div class="mm-row"><span class="pill p-no">{_("contradiction")}</span>'
+                    + "".join(ent_chip(c, e) for e in x.get("shared") or []) + '</div><div class="mm-pair">'
+                    + side(c, _int(x.get("a")) if _int(x.get("a")) is not None else "?", _("One side"))
+                    + side(c, _int(x.get("b")) if _int(x.get("b")) is not None else "?", _("The other side"))
+                    + f'</div><p class="mm-small">{esc(_("A side that is not on the map: the store is over the map’s size limit."))}</p></div>')
             continue
         rel = x.get("relies") if isinstance(x.get("relies"), dict) else {}
         on = rel.get("on")
@@ -972,7 +1008,8 @@ def panel_about(c: _Ctx, every: int) -> str:
     kv = (f'<dl class="mm-kv"><dt>{_("Made")}</dt><dd>{c.d(made)} {esc(made[11:16])} ({esc(s.get("tz"))})</dd>'
           f'<dt>{_("Store")}</dt><dd>{esc(s.get("store"))}'
           + (" · " + esc(", ".join(f"{k} {v}" for k, v in schema.items() if v is not None)) if schema else "") + '</dd>'
-          f'<dt>{_("Inside")}</dt><dd>{inside}</dd>'
+          f'<dt>{_("Inside")}</dt><dd>{inside}'
+          + (f'<br>{esc(limit_note(c))}' if limit_note(c) else "") + '</dd>'
           f'<dt>{_("Old records")}</dt><dd>'
           + (pl(legacy, _("{n} fact was written before memory recorded who said it. It is not counted as weak for that; its origin shows as unknown.|"
                           "{n} facts were written before memory recorded who said them. They are not counted as weak for that; their origin shows as unknown."))

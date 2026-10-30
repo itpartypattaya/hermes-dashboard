@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.8.1 — 2026-10-30
+
+**The memory map says when it is cut.** holographic 0.25.0 keeps at most 1000
+facts and 300 names in the export (a 10,000-fact store made a 26 MB page) and
+reports it in `SNAP.limits`; the tab's overview and "About the snapshot" now
+say "it shows N of M facts / names" in both languages, so a cut map is not read
+as the whole memory. Under the limit, or with an older plugin, nothing changes.
+
+Codex review of the whole tab (30.10.2026): a contradiction whose side the limit
+cut no longer vanishes while its button still counts it (the card stays, the cut
+side shows its number); a failed export's log line names an error only when it is
+a Python or sqlite3 exception class (a last stderr line shaped like `…Error` could
+be stored text), and an unknown `schema_version` is logged by its type, not its
+value. Tests: 86 → 91.
+
 ## v0.8.0 — 2026-10-30
 
 **Memory map tab — experimental** (off by default, `views.memory_map`; the header
