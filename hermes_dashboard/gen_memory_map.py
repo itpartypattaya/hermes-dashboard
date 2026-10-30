@@ -544,6 +544,22 @@ def _counts(c: _Ctx) -> dict:
             "provisional": sum(1 for e in c.ents.values() if e.get("standing") == "provisional")}
 
 
+def limit_note(c: _Ctx) -> str:
+    """What the export's size limit left out (plugin 0.25.0+, SNAP.limits), or "" when nothing was cut."""
+    limits = c.snap.get("limits") if isinstance(c.snap.get("limits"), dict) else {}
+    parts = []
+    for key, forms in (("facts", _("of {n} fact|of {n} facts")),
+                       ("entities", _("of {n} name|of {n} names"))):
+        x = limits.get(key) if isinstance(limits.get(key), dict) else {}
+        shown, total = _int(x.get("shown")), _int(x.get("total"))
+        if shown is not None and total is not None and total > shown:
+            parts.append(f"{shown} " + pl(total, forms))
+    if not parts:
+        return ""
+    return _("The store is over the map's size limit: it shows {what}. Questions and the week's facts come first, "
+             "then the newest.").format(what=", ".join(parts))
+
+
 def panel_home(c: _Ctx, n: dict) -> str:
     cur = sum(1 for f in c.facts.values() if f.get("status") == "current")
     tiles = [("pending", n["pending"], pl(n["pending"], _("waits for your decision|wait for your decision")), "warn" if n["pending"] else "ok"),
@@ -564,7 +580,9 @@ def panel_home(c: _Ctx, n: dict) -> str:
                  + (f'<a class="mm-more" href="#mmap/pending">{_("All {n} →").format(n=len(c.pending))}</a>'
                     if len(c.pending) > TASKS_ON_OVERVIEW else "") + '</div>') if tasks else \
         f'<div class="card mm-small">{_("Nothing waits for a decision.")}</div>'
-    return (f'<p class="mm-lead">{lead}</p><div class="kpis mm-kpis">{kpis}</div>'
+    note = limit_note(c)
+    return (f'<p class="mm-lead">{lead}</p>' + (f'<p class="mm-small mm-limit">{esc(note)}</p>' if note else "")
+            + f'<div class="kpis mm-kpis">{kpis}</div>'
             + sec(_("Waits for your decision"), "", task_html) + _ent_grids(c)
             + f'<p class="mm-foot">{_("Read-only. The map is rebuilt together with the dashboard; something forgotten disappears from it on the next rebuild.")} '
               f'<a href="#mmap/about">{_("About the snapshot")}</a></p>')
@@ -972,7 +990,8 @@ def panel_about(c: _Ctx, every: int) -> str:
     kv = (f'<dl class="mm-kv"><dt>{_("Made")}</dt><dd>{c.d(made)} {esc(made[11:16])} ({esc(s.get("tz"))})</dd>'
           f'<dt>{_("Store")}</dt><dd>{esc(s.get("store"))}'
           + (" · " + esc(", ".join(f"{k} {v}" for k, v in schema.items() if v is not None)) if schema else "") + '</dd>'
-          f'<dt>{_("Inside")}</dt><dd>{inside}</dd>'
+          f'<dt>{_("Inside")}</dt><dd>{inside}'
+          + (f'<br>{esc(limit_note(c))}' if limit_note(c) else "") + '</dd>'
           f'<dt>{_("Old records")}</dt><dd>'
           + (pl(legacy, _("{n} fact was written before memory recorded who said it. It is not counted as weak for that; its origin shows as unknown.|"
                           "{n} facts were written before memory recorded who said them. They are not counted as weak for that; their origin shows as unknown."))

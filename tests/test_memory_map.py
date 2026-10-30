@@ -600,3 +600,33 @@ class MemoryMapPagesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MemoryMapLimitTests(unittest.TestCase):
+    """A store over the export's size limit (plugin 0.25.0+): the map says how much it shows, in both languages, so a
+    person does not read a cut map as the whole memory. Under the limit, or from an older plugin, nothing is said."""
+
+    def render(self, limits, lang="en"):
+        snap = snapshot()
+        if limits is not None:
+            snap["SNAP"]["limits"] = limits
+        i18n.set_lang(lang)
+        try:
+            return build.gen_memory_map.view(cfg_for(new_home()), snap, None)
+        finally:
+            i18n.set_lang("en")
+
+    def test_a_cut_map_says_how_much_it_shows(self):
+        cut = {"facts": {"max": 2, "total": 1500, "shown": 2}, "entities": {"max": 300, "total": 1, "shown": 1}}
+        en = self.render(cut)
+        self.assertIn("2 of 1500 facts", panel(en, "home"))
+        self.assertIn("2 of 1500 facts", panel(en, "about"))
+        self.assertNotIn("names", visible(panel(en, "home")).split("size limit")[1].split(".")[0])
+        ru = self.render(cut, "ru")
+        self.assertIn("2 из 1500 фактов", panel(ru, "home"))
+
+    def test_a_whole_map_or_an_older_plugin_says_nothing(self):
+        whole = {"facts": {"max": 1000, "total": 2, "shown": 2}, "entities": {"max": 300, "total": 1, "shown": 1}}
+        for limits in (whole, None, {"facts": "garbage"}):
+            with self.subTest(limits=limits):
+                self.assertNotIn("size limit", self.render(limits))

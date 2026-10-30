@@ -965,5 +965,8 @@
   "≈ runs/week without LLM": "≈ прогонов/нед без LLM",
   "⚠️ <b>A paid model is answering.</b> {p} is unavailable (quota/limit) — answers go through the paid fallback ({f}).": "⚠️ <b>Работает платная модель.</b> {p} недоступен (квота/лимит) — ответы идут через платный fallback ({f}).",
   "⚠️ <b>The last answer came from a paid model</b> ({m}, {w}). {p} was temporarily unavailable; check whether the primary provider is back.": "⚠️ <b>Последний ответ — на платной модели</b> ({m}, {w}). {p} был временно недоступен; проверь, вернулся ли основной провайдер.",
-  "⛔ <b>The {p} credential was rejected.</b> It will not recover on its own — sign in again; until then every answer is billed to the paid fallback ({f}).": "⛔ <b>Учётка {p} отвергнута.</b> Сама она не восстановится — нужен повторный вход; до этого каждый ответ оплачивается платным фоллбэком ({f})."
+  "⛔ <b>The {p} credential was rejected.</b> It will not recover on its own — sign in again; until then every answer is billed to the paid fallback ({f}).": "⛔ <b>Учётка {p} отвергнута.</b> Сама она не восстановится — нужен повторный вход; до этого каждый ответ оплачивается платным фоллбэком ({f}).",
+  "The store is over the map's size limit: it shows {what}. Questions and the week's facts come first, then the newest.": "Хранилище больше предела карты: на ней {what}. Сначала то, о чём есть вопросы, и факты недели, потом самые новые.",
+  "of {n} fact|of {n} facts": "из {n} факта|из {n} фактов|из {n} фактов",
+  "of {n} name|of {n} names": "из {n} имени|из {n} имён|из {n} имён"
 }
