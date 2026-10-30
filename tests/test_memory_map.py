@@ -630,3 +630,35 @@ class MemoryMapLimitTests(unittest.TestCase):
         for limits in (whole, None, {"facts": "garbage"}):
             with self.subTest(limits=limits):
                 self.assertNotIn("size limit", self.render(limits))
+
+    def test_a_contradiction_with_a_side_cut_by_the_limit_is_still_shown(self):
+        """The tab's button counts every contradiction: each one has a card, a side the limit cut shows its number."""
+        snap = snapshot(CONFLICTS=[{"id": "C-1", "a": 1, "b": 77, "shared": [3], "relies": {"on": None, "why": "tie"}}])
+        snap["SNAP"]["limits"] = {"facts": {"max": 2, "total": 900, "shown": 2}}
+        html = build.gen_memory_map.view(cfg_for(new_home()), snap, None)
+        page = panel(html, "conflicts")
+        self.assertEqual(page.count('<div class="card mm-pend">'), 1)
+        self.assertIn("№77", visible(page))
+        self.assertIn("size limit", visible(page))
+
+
+class ExporterFailureLogTests(unittest.TestCase):
+    """A failed export's log line names a kind the dashboard knows, never a line or value the exporter printed."""
+
+    def test_an_error_line_shaped_like_an_error_name_is_not_logged(self):
+        home = new_home()
+        fake_plugin(home, "sys.stderr.write(%r); sys.exit(1)" % "Traceback\nValueError: x\nMyPrivateStoredSecretError\n")
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            build.gen_memory_map.load(cfg_for(home))
+        self.assertNotIn("MyPrivateStoredSecret", buf.getvalue())
+
+    def test_an_unknown_schema_value_is_not_logged(self):
+        home = new_home()
+        fake_plugin(home, printing(snapshot(schema_version="Пароль hunter2")))
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            data, why = build.gen_memory_map.load(cfg_for(home))
+        self.assertIsNone(data)
+        self.assertNotIn("hunter2", buf.getvalue())
+        self.assertIn("memory-map failed", buf.getvalue())

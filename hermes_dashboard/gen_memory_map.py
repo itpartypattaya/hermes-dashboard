@@ -18,6 +18,7 @@ messages, so it is escaped like any other untrusted text.
 """
 from __future__ import annotations
 
+import builtins
 import json
 import math
 import os
@@ -108,7 +109,17 @@ def _run(cmd: list[str], env: dict, timeout: float) -> tuple[int, bytes, bytes]:
     return p.returncode, out, err
 
 
-_ERROR_NAME = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt))\b")
+_ERROR_NAME = re.compile(r"^(?:sqlite3\.)?([A-Za-z]+)(?::|$)")
+
+
+def _known_error(name: str) -> bool:
+    """A Python built-in exception class or one of sqlite3's: a name the exporter cannot make up from stored text."""
+    cls = getattr(builtins, name, None)
+    if isinstance(cls, type) and issubclass(cls, BaseException):
+        return True
+    import sqlite3
+    cls = getattr(sqlite3, name, None)
+    return isinstance(cls, type) and issubclass(cls, BaseException)
 
 
 def _stderr_kind(err: bytes) -> str:
@@ -117,7 +128,7 @@ def _stderr_kind(err: bytes) -> str:
     password."""
     lines = [ln.strip() for ln in err.decode("utf-8", "replace").splitlines() if ln.strip()]
     m = _ERROR_NAME.match(lines[-1]) if lines else None
-    if m:
+    if m and _known_error(m.group(1)):
         return m.group(1)
     if lines and lines[-1].startswith("memory_map:"):
         return "memory_map error"
@@ -142,8 +153,10 @@ def collect(cfg: Config) -> dict:
     except (UnicodeDecodeError, ValueError):
         raise MapUnavailable("not_json", f"{len(out)} bytes") from None
     if not isinstance(data, dict) or data.get("schema_version") not in SUPPORTED_SCHEMAS:
-        got = data.get("schema_version") if isinstance(data, dict) else type(data).__name__
-        raise MapUnavailable("schema", f"schema_version {got!r}")
+        got = data.get("schema_version") if isinstance(data, dict) else None
+        # a number is shown, anything else only by its type: the value could be any text the exporter printed
+        shown = got if isinstance(got, int) and not isinstance(got, bool) else type(got).__name__
+        raise MapUnavailable("schema", f"schema_version {shown}")
     for key, kind in REQUIRED.items():
         if not isinstance(data.get(key), kind):
             raise MapUnavailable("schema", f"{key} is not a {kind.__name__}")
@@ -799,7 +812,12 @@ def panel_conflicts(c: _Ctx) -> str:
     out = (f'<p class="mm-lead">{_("Two facts about the same thing say different things. The agent does not choose by itself: both stay until a person answers.")}</p>')
     for x in c.conflicts:
         a, b = c.facts.get(x.get("a")), c.facts.get(x.get("b"))
-        if not a or not b:
+        if not a or not b:  # a side the export's size limit left out: the card stays, that side is its number
+            out += (f'<div class="card mm-pend"><div class="mm-row"><span class="pill p-no">{_("contradiction")}</span>'
+                    + "".join(ent_chip(c, e) for e in x.get("shared") or []) + '</div><div class="mm-pair">'
+                    + side(c, _int(x.get("a")) if _int(x.get("a")) is not None else "?", _("One side"))
+                    + side(c, _int(x.get("b")) if _int(x.get("b")) is not None else "?", _("The other side"))
+                    + f'</div><p class="mm-small">{esc(_("A side that is not on the map: the store is over the map’s size limit."))}</p></div>')
             continue
         rel = x.get("relies") if isinstance(x.get("relies"), dict) else {}
         on = rel.get("on")

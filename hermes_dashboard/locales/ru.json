@@ -968,5 +968,8 @@
   "⛔ <b>The {p} credential was rejected.</b> It will not recover on its own — sign in again; until then every answer is billed to the paid fallback ({f}).": "⛔ <b>Учётка {p} отвергнута.</b> Сама она не восстановится — нужен повторный вход; до этого каждый ответ оплачивается платным фоллбэком ({f}).",
   "The store is over the map's size limit: it shows {what}. Questions and the week's facts come first, then the newest.": "Хранилище больше предела карты: на ней {what}. Сначала то, о чём есть вопросы, и факты недели, потом самые новые.",
   "of {n} fact|of {n} facts": "из {n} факта|из {n} фактов|из {n} фактов",
-  "of {n} name|of {n} names": "из {n} имени|из {n} имён|из {n} имён"
+  "of {n} name|of {n} names": "из {n} имени|из {n} имён|из {n} имён",
+  "One side": "Одна сторона",
+  "The other side": "Другая сторона",
+  "A side that is not on the map: the store is over the map’s size limit.": "Стороны нет на карте: хранилище больше предела карты."
 }
