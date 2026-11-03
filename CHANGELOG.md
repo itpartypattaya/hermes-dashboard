@@ -6,7 +6,9 @@
 of its owner, `local-<hash>`, and names the job only in the admission that started it (`session_admissions`,
 request id `cron:<job id>:<execution id>`). The card «LLM job telemetry» looked for `cron_<job id>_<time>`
 session ids, found none and silently disappeared. It now reads the job from the admission and still reads the
-old ids, so a history that spans the upgrade counts both.
+old ids, so a history that spans the upgrade counts both. Like Hermes itself (`cron_run_identity`), it
+counts only an admission of the scheduler principal `cron-owner`, and the first one by `seq` names the job,
+whatever order the database index would return.
 
 **Contract check against real Hermes.** A CI job installs the latest core release, lets it write a home with
 its own code and builds the dashboard from it (`contract/`); this is how the telemetry break above was found.

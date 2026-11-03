@@ -258,10 +258,12 @@ JOB_SQL = """
     GROUP BY job
 """
 # Hermes 0.22.1+ runs an LLM job in a session of its own owner, `local-<hash>`; the job is named only by the
-# admission that started it, request id `cron:<job id>:<execution id>`.
+# admission that started it, request id `cron:<job id>:<execution id>`. Read it the way Hermes does
+# (hermes_state_portability.cron_run_identity): the scheduler principal's first admission of the session.
 ADMITTED_JOB = """(SELECT substr(a.request_id, 6, instr(substr(a.request_id, 6), ':') - 1)
                    FROM session_admissions a
-                   WHERE a.target_session_id = s.id AND a.request_id LIKE 'cron:%' LIMIT 1)"""
+                   WHERE a.principal_id = 'cron-owner' AND a.target_session_id = s.id
+                     AND a.request_id LIKE 'cron:%' ORDER BY a.seq LIMIT 1)"""
 
 
 def job_telemetry_card() -> str:
