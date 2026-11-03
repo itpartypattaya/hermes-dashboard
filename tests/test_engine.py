@@ -139,6 +139,49 @@ class SqlTests(unittest.TestCase):
         self.assertEqual(common.yaml_get("model.default"), "gpt-test")
         self.assertEqual(common.yaml_get("nope.x", "d"), "d")
 
+    def test_per_job_telemetry_finds_the_job_of_an_owner_session(self):
+        """Hermes 0.22.1+ runs an LLM cron job in a `local-<hash>` session; only the admission that started
+        it names the job (`cron:<job id>:<execution id>`). Older sessions carry the job in their id."""
+        from hermes_dashboard import gen_cron
+        i18n.set_lang("en")
+        db = sqlite3.connect(self.home / "state.db")
+        db.executescript("""
+        CREATE TABLE session_admissions(seq INTEGER PRIMARY KEY AUTOINCREMENT, admission_id TEXT NOT NULL UNIQUE,
+          request_id TEXT NOT NULL, principal_id TEXT NOT NULL, target_session_id TEXT NOT NULL,
+          lineage_json TEXT NOT NULL, payload_json TEXT NOT NULL, payload_digest TEXT NOT NULL,
+          intent TEXT NOT NULL, status TEXT NOT NULL, outcome TEXT, owner_epoch INTEGER, generation INTEGER);
+        """)
+        now = time.time()
+        db.executemany("INSERT INTO sessions(id, source, model, started_at, input_tokens, api_call_count, "
+                       "billing_provider) VALUES (?,?,?,?,?,?,?)", [
+                           ("cron_aaa_20261101_030000", "cron", "gpt-test", now - 7200, 700, 1, "openai-codex"),
+                           ("local-1f2e", "cron", "gpt-test", now - 3600, 400, 2, "openai-codex"),
+                           ("local-9c8b", "cron", "gpt-test", now - 1800, 300, 1, "openai-codex"),
+                           ("local-0000", "cron", "gpt-test", now - 900, 50, 1, "openai-codex")])  # no admission
+        db.executemany("INSERT INTO session_admissions(admission_id, request_id, principal_id, target_session_id, "
+                       "lineage_json, payload_json, payload_digest, intent, status, outcome) "
+                       "VALUES (?,?,'cron-owner',?,'[]','{}','x','queue','terminal','completed')", [
+                           ("a1", "cron:ccc:0123abcd", "local-1f2e"),
+                           ("a2", "cron:ccc:4567ef01", "local-9c8b")])
+        db.commit()
+        db.close()
+        card = gen_cron.job_telemetry_card()
+        self.assertRegex(card, r"<tr><td>broken</td><td>2</td>", "both owner sessions belong to job ccc")
+        self.assertRegex(card, r"<tr><td>nightly dream</td><td>1</td>", "the old session id still names aaa")
+        self.assertNotIn("deleted job", card, "a session no admission names is not a job")
+
+    def test_per_job_telemetry_without_an_admissions_table(self):
+        """A state.db from before Hermes 0.22.1 has no session_admissions: the card still reads the old ids."""
+        from hermes_dashboard import gen_cron
+        i18n.set_lang("en")
+        db = sqlite3.connect(self.home / "state.db")
+        db.execute("INSERT INTO sessions(id, source, model, started_at, input_tokens, api_call_count, "
+                   "billing_provider) VALUES ('cron_aaa_20261101_030000', 'cron', 'gpt-test', ?, 700, 1, "
+                   "'openai-codex')", (time.time() - 60,))
+        db.commit()
+        db.close()
+        self.assertRegex(gen_cron.job_telemetry_card(), r"<tr><td>nightly dream</td><td>1</td>")
+
 
 class I18nTests(unittest.TestCase):
     def test_ru_locale_complete(self):
