@@ -184,6 +184,19 @@ class CoreWrittenHome(unittest.TestCase):
         self.assertIn(MEMORY_TEXT, stored)
         self.assertEqual(memory["MEMCH"], len(stored))
 
+    def test_times_are_epoch_seconds(self):
+        # Every window ("7 days", "30 days", the daily chart) compares these with strftime('%s', …): a text
+        # timestamp would pass every window, so a week would silently count the whole history.
+        import sqlite3
+        now = time.time()
+        with sqlite3.connect(self.home / "state.db") as db:
+            for table, column in (("sessions", "started_at"), ("messages", "timestamp")):
+                values = db.execute(f"SELECT typeof({column}), {column} FROM {table}").fetchall()
+                self.assertTrue(values, table)
+                for kind, value in values:
+                    self.assertEqual(kind, "real", f"{table}.{column} = {value!r}")
+                    self.assertLess(abs(now - value), 3600, f"{table}.{column} = {value!r}")
+
     def test_overview_numbers(self):
         k = dashboard_build.collect_kpis(self.cfg)
         expected = {
