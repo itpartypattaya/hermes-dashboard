@@ -116,6 +116,17 @@ def core(home, *args, ok=(0,)):
     return result.stdout
 
 
+def gateway_pid(home):
+    """PID of the gateway Hermes says belongs to `home` (its own identity check), or None."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; from pathlib import Path; from gateway.status import "
+         "live_gateway_pid_for_home as live; print(live(Path(sys.argv[1])) or '')", str(home)],
+        env=environment(home), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    if result.returncode != 0:
+        raise AssertionError(f"cannot ask Hermes for the gateway of {home}:\n{result.stderr}")
+    return int(result.stdout.strip()) if result.stdout.strip() else None
+
+
 def create(home, name, *args):
     output = core(home, "cron", "create", "every 1h", *args, "--name", name, "--deliver", "local")
     match = re.search(r"Created job: (\S+)", output)
@@ -167,7 +178,21 @@ class CoreWrittenHome(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        shutil.rmtree(cls.home, ignore_errors=True)
+        # The LLM turns started a gateway for this home in the background (`gateway run --idle-exit`). Its
+        # cron jobs count as work, so it never idles out: left alone it outlives the test, and the deleted
+        # home, for good. Stop it the way an operator would, scoped to this home only.
+        try:
+            leftover = gateway_pid(cls.home)
+            if leftover is not None:
+                core(cls.home, "gateway", "stop", "--yes")
+                deadline = time.monotonic() + 60
+                while leftover is not None and time.monotonic() < deadline:
+                    time.sleep(0.5)
+                    leftover = gateway_pid(cls.home)
+        finally:
+            shutil.rmtree(cls.home, ignore_errors=True)
+        if leftover is not None:
+            raise AssertionError(f"the gateway of the test home is still running (pid {leftover})")
 
     def test_the_core_wrote_what_the_scenario_needs(self):
         # Guards the fixture itself: without these the checks below would prove nothing.

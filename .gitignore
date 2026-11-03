@@ -5,3 +5,6 @@ __pycache__/
 
 # scratch worktrees from local verification runs
 /oldcheck_wt/
+
+# private working notes: the hand-over log
+/HANDOFF.md
