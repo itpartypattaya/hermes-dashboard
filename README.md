@@ -239,6 +239,16 @@ scan for classes of leaked identifiers. To check your own installation's strings
 HERMES_DASHBOARD_SCAN_EXTRA="my-host,my-repo,@myhandle" bin/hermes-dashboard check
 ```
 
+CI also runs `contract/` against the latest Hermes release, because the synthetic home cannot notice when
+Hermes changes its own formats: the core writes a real home (`hermes config set`, cron jobs created and run
+by `hermes cron`, a one-shot turn against a stub model on 127.0.0.1, so no network and no key) and the
+dashboard must show the numbers in it — sessions, tokens, cron cards, per-job telemetry, the memory tool
+call. It needs Hermes core installed in the same Python:
+
+```bash
+python -m unittest discover -s contract -v
+```
+
 ## Memory map (experimental)
 
 The **Memory map** tab is new and experimental: what it shows, its wording and the
