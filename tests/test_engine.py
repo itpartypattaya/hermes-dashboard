@@ -170,6 +170,51 @@ class SqlTests(unittest.TestCase):
         self.assertRegex(card, r"<tr><td>nightly dream</td><td>1</td>", "the old session id still names aaa")
         self.assertNotIn("deleted job", card, "a session no admission names is not a job")
 
+    def _owner_sessions(self, sessions, admissions):
+        """Owner-session cron runs with the admissions table and the index Hermes 0.22.6 creates."""
+        db = sqlite3.connect(self.home / "state.db")
+        db.executescript("""
+        CREATE TABLE session_admissions(seq INTEGER PRIMARY KEY AUTOINCREMENT, admission_id TEXT NOT NULL UNIQUE,
+          request_id TEXT NOT NULL, principal_id TEXT NOT NULL, target_session_id TEXT NOT NULL,
+          lineage_json TEXT NOT NULL, payload_json TEXT NOT NULL, payload_digest TEXT NOT NULL,
+          intent TEXT NOT NULL, status TEXT NOT NULL, outcome TEXT, owner_epoch INTEGER, generation INTEGER,
+          UNIQUE (principal_id, target_session_id, request_id));
+        CREATE INDEX session_admissions_pending ON session_admissions(target_session_id, status, seq);
+        """)
+        now = time.time()
+        db.executemany("INSERT INTO sessions(id, source, model, started_at, input_tokens, api_call_count, "
+                       "billing_provider) VALUES (?, 'cron', 'gpt-test', ?, 100, 1, 'openai-codex')",
+                       [(sid, now - 600) for sid in sessions])
+        db.executemany("INSERT INTO session_admissions(admission_id, request_id, principal_id, target_session_id, "
+                       "lineage_json, payload_json, payload_digest, intent, status) "
+                       "VALUES (?,?,?,?,'[]','{}','x','queue',?)", admissions)
+        db.commit()
+        db.close()
+
+    def test_per_job_telemetry_counts_only_the_scheduler_admission(self):
+        """Hermes names a run's job by the admission of its scheduler principal, `cron-owner`
+        (hermes_state_portability.cron_run_identity); a request id of another principal names no job."""
+        from hermes_dashboard import gen_cron
+        i18n.set_lang("en")
+        self._owner_sessions(["local-a1", "local-b2"], [
+            ("x1", "cron:ccc:0123abcd", "cron-owner", "local-a1", "terminal"),
+            ("x2", "cron:aaa:4567ef01", "user-77", "local-b2", "terminal")])
+        card = gen_cron.job_telemetry_card()
+        self.assertRegex(card, r"<tr><td>broken</td><td>1</td>")
+        self.assertNotIn("nightly dream", card, "an admission of another principal is not a cron run")
+
+    def test_per_job_telemetry_takes_the_first_admission(self):
+        """With several scheduler admissions on one session the first (by seq) names the job, as in Hermes,
+        whichever order the index the planner picks would give (here a later `queued` row sorts first)."""
+        from hermes_dashboard import gen_cron
+        i18n.set_lang("en")
+        self._owner_sessions(["local-c3"], [
+            ("y1", "cron:ccc:0123abcd", "cron-owner", "local-c3", "terminal"),
+            ("y2", "cron:aaa:4567ef01", "cron-owner", "local-c3", "queued")])
+        card = gen_cron.job_telemetry_card()
+        self.assertRegex(card, r"<tr><td>broken</td><td>1</td>")
+        self.assertNotIn("nightly dream", card)
+
     def test_per_job_telemetry_without_an_admissions_table(self):
         """A state.db from before Hermes 0.22.1 has no session_admissions: the card still reads the old ids."""
         from hermes_dashboard import gen_cron
