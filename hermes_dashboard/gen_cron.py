@@ -236,22 +236,32 @@ def efficiency_card() -> str:
 
 
 JOB_SQL = """
-    -- session id is `cron_<job id>_<timestamp>`; cut between the first and the
-    -- second underscore instead of assuming a fixed id length, otherwise every job
-    -- whose id is not exactly 12 characters silently renders as «deleted job»
-    SELECT substr(id, 6, instr(substr(id, 6), '_') - 1) job, count(*) sess,
+    SELECT job, count(*) sess,
            coalesce(sum(input_tokens),0) inp,
            coalesce(sum(output_tokens+reasoning_tokens),0) outr,
            coalesce(sum(cache_read_tokens),0) cache,
            sum(CASE WHEN {paid} THEN 1 ELSE 0 END) paid
-    FROM sessions
-    WHERE source='cron' AND id LIKE 'cron\\_%' ESCAPE '\\'
-      -- a cron session that never called the model spent nothing: counting it
-      -- here inflates «sess» and can mark an unbilled row as paid
-      AND coalesce(api_call_count,0) > 0
-      AND started_at >= strftime('%s','now',?)
+    FROM (SELECT s.*, CASE
+            -- before Hermes 0.22.1 the session id is `cron_<job id>_<timestamp>`; cut
+            -- between the first and the second underscore instead of assuming a fixed id
+            -- length, otherwise every job whose id is not exactly 12 characters silently
+            -- renders as «deleted job»
+            WHEN s.id LIKE 'cron\\_%' ESCAPE '\\' THEN substr(s.id, 6, instr(substr(s.id, 6), '_') - 1)
+            ELSE {admitted} END job
+          FROM sessions s
+          WHERE s.source='cron'
+            -- a cron session that never called the model spent nothing: counting it
+            -- here inflates «sess» and can mark an unbilled row as paid
+            AND coalesce(api_call_count,0) > 0
+            AND started_at >= strftime('%s','now',?))
+    WHERE coalesce(job, '') != ''
     GROUP BY job
 """
+# Hermes 0.22.1+ runs an LLM job in a session of its own owner, `local-<hash>`; the job is named only by the
+# admission that started it, request id `cron:<job id>:<execution id>`.
+ADMITTED_JOB = """(SELECT substr(a.request_id, 6, instr(substr(a.request_id, 6), ':') - 1)
+                   FROM session_admissions a
+                   WHERE a.target_session_id = s.id AND a.request_id LIKE 'cron:%' LIMIT 1)"""
 
 
 def job_telemetry_card() -> str:
@@ -262,10 +272,13 @@ def job_telemetry_card() -> str:
     except (OSError, ValueError):
         raw = []
     names = {j.get("id"): j.get("name") or j.get("id", "?") for j in raw}
-    sql = JOB_SQL.format(paid=paid())
     try:
         with sqlite3.connect(f"file:{db_path()}?mode=ro", uri=True) as db:
             db.row_factory = sqlite3.Row
+            # an older state.db has no admissions table: its sessions carry the job in their id
+            admissions = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_admissions'"
+                                    ).fetchone()
+            sql = JOB_SQL.format(paid=paid(), admitted=ADMITTED_JOB if admissions else "NULL")
             r30 = {r["job"]: dict(r) for r in db.execute(sql, ("-30 days",))}
             r7 = {r["job"]: dict(r) for r in db.execute(sql, ("-7 days",))}
     except sqlite3.Error:

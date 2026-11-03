@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+**Per-job telemetry works again on Hermes 0.22.1+.** Since 0.22.1 Hermes runs an LLM cron job in a session
+of its owner, `local-<hash>`, and names the job only in the admission that started it (`session_admissions`,
+request id `cron:<job id>:<execution id>`). The card «LLM job telemetry» looked for `cron_<job id>_<time>`
+session ids, found none and silently disappeared. It now reads the job from the admission and still reads the
+old ids, so a history that spans the upgrade counts both.
+
+**Contract check against real Hermes.** A CI job installs the latest core release, lets it write a home with
+its own code and builds the dashboard from it (`contract/`); this is how the telemetry break above was found.
+
 ## v0.8.1 — 2026-10-30
 
 **The memory map says when it is cut.** holographic 0.25.0 keeps at most 1000
