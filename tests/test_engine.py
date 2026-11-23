@@ -1185,9 +1185,17 @@ class HygieneTests(unittest.TestCase):
     }
     SCAN_SUFFIXES = (".py", ".md", ".json", ".css", ".env", ".conf", ".service", ".sh", "")
 
-    def _files(self):
-        for p in ROOT.rglob("*"):
-            if not p.is_file() or ".git" in p.parts or "__pycache__" in p.parts:
+    def _files(self, root=ROOT):
+        # What the public repo carries or will carry: tracked files plus new ones .gitignore does not
+        # exclude. Ignored files are private by design (HANDOFF.md). Outside git — every file.
+        try:
+            out = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others",
+                                  "--exclude-standard"], capture_output=True, check=True).stdout
+            paths = [root / name for name in sorted(set(out.decode("utf-8").split("\0"))) if name]
+        except (OSError, subprocess.CalledProcessError):
+            paths = [p for p in root.rglob("*") if ".git" not in p.relative_to(root).parts]
+        for p in paths:
+            if not p.is_file() or "__pycache__" in p.parts:
                 continue
             if p.suffix in self.SCAN_SUFFIXES:
                 yield p
@@ -1206,6 +1214,29 @@ class HygieneTests(unittest.TestCase):
                     line = txt[:m.start()].count("\n") + 1
                     hits.append("{}:{} [{}] {}".format(p.relative_to(ROOT), line, label, m.group(0)[:40]))
         self.assertEqual(hits, [], "identifiers of a real installation found:\n" + "\n".join(hits))
+
+    def test_scans_what_git_would_publish(self):
+        # A private file listed in .gitignore (a local HANDOFF.md) never reaches the public repo, so
+        # a leak class in it is not a leak; a new file nobody has `git add`-ed yet is one commit away.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            (root / ".gitignore").write_text("HANDOFF.md\n", encoding="utf-8")
+            (root / "HANDOFF.md").write_text("venv: C:\\Users\\someone\\py\n", encoding="utf-8")
+            (root / "tracked.py").write_text("x = 1\n", encoding="utf-8")
+            (root / "new.md").write_text("draft\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "tracked.py", ".gitignore"], check=True)
+            got = sorted(p.relative_to(root).as_posix() for p in self._files(root))
+        self.assertEqual(got, [".gitignore", "new.md", "tracked.py"])
+
+    def test_scans_everything_outside_git(self):
+        # A source tarball has no .git and no ignore rules to trust: every file is checked.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "HANDOFF.md").write_text("notes\n", encoding="utf-8")
+            (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+            got = sorted(p.relative_to(root).as_posix() for p in self._files(root))
+        self.assertEqual(got, ["HANDOFF.md", "a.py"])
 
     def test_english_ui_strings(self):
         """UI text lives in English _() keys; other languages belong to locales/."""
